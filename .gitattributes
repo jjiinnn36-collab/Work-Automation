@@ -4,6 +4,7 @@
 
 # 소스와 데이터도 Windows 전용이므로 CRLF 로 고정한다.
 *.cs   text eol=crlf
+*.ps1  text eol=crlf
 *.tsv  text eol=crlf
 
 # 문서는 어느 쪽이든 무방

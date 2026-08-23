@@ -120,7 +120,7 @@ namespace PaymentAlert
             }
 
             // ── 경고 문구 조립 ───────────────────────────────────
-            string warningText = BuildWarning(cache, years, warnings);
+            string warningText = BuildWarning(cache, years, warnings, masterPath);
 
             var form = new AlertForm(rows, set.Overdue, cal, today, warningText);
             Application.Run(form);
@@ -144,9 +144,26 @@ namespace PaymentAlert
             return 0;
         }
 
-        static string BuildWarning(Holidays.Cache cache, List<int> years, List<string> masterWarnings)
+        static string BuildWarning(Holidays.Cache cache, List<int> years,
+                                   List<string> masterWarnings, string masterPath)
         {
             var parts = new List<string>();
+
+            // 엑셀 양식을 고치고 변환을 잊으면 프로그램은 옛 자료로 계속 돈다.
+            // 알아채기 어려운 실패라 반드시 눈에 띄게 알린다.
+            string templatePath = Path.Combine(DataDir, "payment-master-template.xlsx");
+            if (File.Exists(templatePath) && File.Exists(masterPath))
+            {
+                DateTime x = File.GetLastWriteTime(templatePath);
+                DateTime t = File.GetLastWriteTime(masterPath);
+                if (x > t)
+                {
+                    parts.Add(string.Format(
+                        "엑셀 양식이 납부 자료보다 최신입니다 (양식 {0}, 자료 {1}). " +
+                        "엑셀에서 고친 내용이 아직 반영되지 않았습니다. convert-excel.bat 을 실행하세요.",
+                        x.ToString("MM-dd HH:mm"), t.ToString("MM-dd HH:mm")));
+                }
+            }
 
             var missing = new List<string>();
             foreach (int y in years)
