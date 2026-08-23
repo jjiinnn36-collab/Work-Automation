@@ -1,0 +1,15 @@
+# 배치 파일은 반드시 CRLF 여야 한다.
+# LF 로 체크아웃되면 cmd.exe 가 '^' 줄 연결을 해석하지 못해 통째로 실패한다.
+*.bat text eol=crlf
+
+# 소스와 데이터도 Windows 전용이므로 CRLF 로 고정한다.
+*.cs   text eol=crlf
+*.tsv  text eol=crlf
+
+# 문서는 어느 쪽이든 무방
+*.md   text
+
+# 바이너리
+*.exe  binary
+*.xlsx binary
+*.png  binary
