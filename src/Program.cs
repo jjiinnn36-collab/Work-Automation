@@ -20,16 +20,19 @@ namespace PaymentAlert
             LogPath = Path.Combine(DataDir, "run.log");
 
             bool 강제표시 = false;      // --force : 오늘 이미 확인한 건도 다시 표시
+            bool 보드 = false;          // --board : 당월 기한 상시 보드
             DateTime today = DateTime.Today;
+            DateTime? 보드기준일 = null;   // --date 를 보드에도 적용해 다른 달을 볼 수 있게 한다
 
             foreach (string a in args)
             {
                 if (a == "--force") 강제표시 = true;
+                else if (a == "--board") 보드 = true;
                 else if (a.StartsWith("--date="))
                 {
                     // 테스트용. 특정 날짜로 실행한다.
                     DateTime d;
-                    if (DateTime.TryParse(a.Substring(7), out d)) today = d.Date;
+                    if (DateTime.TryParse(a.Substring(7), out d)) { today = d.Date; 보드기준일 = d.Date; }
                 }
             }
 
@@ -38,6 +41,7 @@ namespace PaymentAlert
 
             try
             {
+                if (보드) return RunBoard(보드기준일);
                 return Run(today, 강제표시);
             }
             catch (Exception ex)
@@ -50,6 +54,34 @@ namespace PaymentAlert
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 1;
             }
+        }
+
+        /// <summary>당월 기한 보드를 띄운다. 처리를 강제하지 않는 보기 전용 창이다.</summary>
+        static int RunBoard(DateTime? 기준일)
+        {
+            string masterPath = Path.Combine(DataDir, "payment-master.tsv");
+            if (!File.Exists(masterPath))
+            {
+                MessageBox.Show(
+                    "납부 마스터 파일이 없습니다.\r\n\r\n" + masterPath,
+                    "당월 납부 기한", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return 2;
+            }
+
+            // 같은 보드를 두 개 띄우지 않는다.
+            bool isNew;
+            using (var mutex = new System.Threading.Mutex(true, "PaymentAlert.MonthlyBoard", out isNew))
+            {
+                if (!isNew)
+                {
+                    Log("보드가 이미 실행 중입니다.");
+                    return 0;
+                }
+
+                var board = new MonthlyBoard(DataDir, Path.Combine(BaseDir, "증빙"), 기준일);
+                Application.Run(board);
+            }
+            return 0;
         }
 
         static int Run(DateTime today, bool 강제표시)
