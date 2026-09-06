@@ -209,17 +209,18 @@ namespace PaymentAlert
 
             List<Occurrence> all = Scheduler.BuildOccurrences(master, cal, today, amounts);
 
-            // 보정된 기한이 이번 달에 드는 건만 고른다.
-            // 원기한이 지난달 말이어도 밀려서 이번 달이면 이번 달 일이다.
+            // 원기한(제도상 기한)이 이번 달에 드는 건을 고른다.
+            // 5/31이 일요일이라 실제 납부가 6/1이어도 그 건은 5월 일로 본다.
+            // 실제 납부일은 각 행에 함께 표시한다.
             var month = new List<Occurrence>();
             foreach (Occurrence o in all)
             {
-                if (o.보정기한일.Year == today.Year && o.보정기한일.Month == today.Month)
+                if (o.원기한일.Year == today.Year && o.원기한일.Month == today.Month)
                     month.Add(o);
             }
             month.Sort(delegate(Occurrence a, Occurrence b)
             {
-                int c = a.보정기한일.CompareTo(b.보정기한일);
+                int c = a.원기한일.CompareTo(b.원기한일);
                 if (c != 0) return c;
                 return string.Compare(a.Item.Id, b.Item.Id, StringComparison.Ordinal);
             });
@@ -263,13 +264,16 @@ namespace PaymentAlert
 
             var p = new Panel();
             p.Width = Math.Max(listPanel.ClientSize.Width - 22, 220);
-            p.Height = 52;
+            p.Height = 70;
             p.BackColor = done ? Color.FromArgb(245, 250, 246) : Color.White;
             p.BorderStyle = BorderStyle.FixedSingle;
             p.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
 
+            var ko = new CultureInfo("ko-KR");
+            bool 밀림 = o.원기한일 != o.보정기한일;
+
             var 날짜 = new Label();
-            날짜.Text = o.보정기한일.ToString("MM/dd", CultureInfo.InvariantCulture);
+            날짜.Text = o.원기한일.ToString("MM/dd", CultureInfo.InvariantCulture);
             날짜.Font = new Font("맑은 고딕", 10f, FontStyle.Bold);
             날짜.AutoSize = true;
             날짜.Location = new Point(8, 6);
@@ -277,10 +281,17 @@ namespace PaymentAlert
             p.Controls.Add(날짜);
 
             var 요일 = new Label();
-            요일.Text = o.보정기한일.ToString("ddd", new CultureInfo("ko-KR"));
+            // 주말·공휴일로 밀린 건은 실제 납부일을 함께 보여준다.
+            // 원기한 그날은 납부가 불가능하므로 이 정보가 빠지면 안 된다.
+            요일.Text = 밀림
+                ? string.Format("{0} → {1}({2})",
+                    o.원기한일.ToString("ddd", ko),
+                    o.보정기한일.ToString("MM/dd", CultureInfo.InvariantCulture),
+                    o.보정기한일.ToString("ddd", ko))
+                : o.원기한일.ToString("ddd", ko);
             요일.AutoSize = true;
-            요일.Location = new Point(10, 28);
-            요일.ForeColor = 흐린글씨;
+            요일.Location = new Point(10, 27);
+            요일.ForeColor = 밀림 ? 임박색 : 흐린글씨;
             p.Controls.Add(요일);
 
             var 이름 = new Label();
@@ -293,7 +304,7 @@ namespace PaymentAlert
 
             var 상태 = new Label();
             상태.AutoSize = true;
-            상태.Location = new Point(52, 28);
+            상태.Location = new Point(10, 47);
             if (done)
             {
                 상태.Text = "완료";
@@ -315,13 +326,13 @@ namespace PaymentAlert
                 ? string.Format("{0:N0}", o.실제금액.금액)
                 : (o.Item.고정금액.HasValue ? string.Format("{0:N0}", o.Item.고정금액.Value) : "");
             금액.AutoSize = true;
-            금액.Location = new Point(52, 28);
+            금액.Location = new Point(10, 47);
             금액.Visible = false;   // 폭이 좁아 기본은 숨김. 도구설명으로 보여준다.
             p.Controls.Add(금액);
 
             string tip = string.Format("{0} ({1})\n기한 {2}\n{3}",
                 o.Item.비용명, o.Item.기관,
-                o.보정기한일.ToString("yyyy-MM-dd"),
+                o.원기한일.ToString("yyyy-MM-dd (ddd)", ko) + "  → 실납부 " + o.보정기한일.ToString("MM-dd (ddd)", ko),
                 금액.Text.Length > 0 ? 금액.Text + "원" : "금액 미확인");
             var tt = new ToolTip();
             tt.SetToolTip(p, tip);
