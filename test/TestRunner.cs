@@ -310,6 +310,61 @@ namespace PaymentAlert.Tests
             Check("파일이 없으면 빈 사전", noAm.Count, 0);
             File.Delete(amPath);
 
+            Console.WriteLine("\n[11e] 증빙 첨부 보관");
+            string attRoot = Path.Combine(Path.GetTempPath(), "pa_att_" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            string attIndex = Path.Combine(attRoot, "attachments.tsv");
+            Directory.CreateDirectory(attRoot);
+
+            // 첨부할 원본 두 개를 만든다
+            string src1 = Path.Combine(attRoot, "신고서 원본.pdf");
+            string src2 = Path.Combine(attRoot, "영수증.png");
+            File.WriteAllText(src1, "신고서 내용", new System.Text.UTF8Encoding(true));
+            File.WriteAllText(src2, "영수증 내용", new System.Text.UTF8Encoding(true));
+
+            var store = new AttachmentStore(attIndex, attRoot);
+            store.Load();
+            Check("처음엔 증빙 없음", store.CountFor(2026, "fx-03"), 0);
+
+            Attachment a1 = store.Attach(2026, "fx-03", "전표결재", src1);
+            Attachment a2 = store.Attach(2026, "fx-03", "납부완료", src2);
+            Check("2건 첨부됨", store.CountFor(2026, "fx-03"), 2);
+            Check("다른 건에는 영향 없음", store.CountFor(2026, "fx-04"), 0);
+            Check("연도가 다르면 별개", store.CountFor(2027, "fx-03"), 0);
+
+            // 원본이 사라져도 증빙은 남아야 한다
+            CheckTrue("복사본이 존재", File.Exists(store.FullPath(a1)));
+            File.Delete(src1);
+            CheckTrue("원본을 지워도 복사본 유지", File.Exists(store.FullPath(a1)));
+
+            Check("단계가 기록됨", a1.단계, "전표결재");
+            Check("원본 파일명 보존", a1.원본파일명, "신고서 원본.pdf");
+
+            // 다시 읽어도 그대로여야 한다
+            var store2 = new AttachmentStore(attIndex, attRoot);
+            store2.Load();
+            Check("재적재 후에도 2건", store2.CountFor(2026, "fx-03"), 2);
+            var loadedAtts = store2.For(2026, "fx-03");
+            Check("첨부 순서 유지 (첫 건)", loadedAtts[0].단계, "전표결재");
+            Check("한글 파일명 보존", loadedAtts[0].원본파일명, "신고서 원본.pdf");
+
+            // 삭제
+            store2.Remove(loadedAtts[0]);
+            Check("삭제 후 1건", store2.CountFor(2026, "fx-03"), 1);
+
+            var store3 = new AttachmentStore(attIndex, attRoot);
+            store3.Load();
+            Check("삭제가 파일에도 반영", store3.CountFor(2026, "fx-03"), 1);
+
+            // 같은 파일을 두 번 붙여도 덮어쓰지 않는다
+            store3.Attach(2026, "fx-04", "납부완료", src2);
+            store3.Attach(2026, "fx-04", "납부완료", src2);
+            Check("같은 파일 두 번 첨부 시 2건", store3.CountFor(2026, "fx-04"), 2);
+            var dup = store3.For(2026, "fx-04");
+            CheckTrue("서로 다른 파일로 저장됨", dup[0].저장파일 != dup[1].저장파일);
+            CheckTrue("둘 다 실재", File.Exists(store3.FullPath(dup[0])) && File.Exists(store3.FullPath(dup[1])));
+
+            try { Directory.Delete(attRoot, true); } catch { }
+
             Console.WriteLine("\n[12] 공휴일 자료 없는 연도는 안전 여유 적용");
             var calNoYear = new BusinessDayCalendar(new DateTime[0], new int[] { 2025 });
             var occs2 = Scheduler.BuildOccurrences(master, calNoYear, new DateTime(2026, 6, 15));

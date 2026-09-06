@@ -59,6 +59,8 @@ namespace PaymentAlert
             string holidayPath = Path.Combine(DataDir, "holidays.tsv");
             string amountPath = Path.Combine(DataDir, "amounts.tsv");
             string apiKeyPath = Path.Combine(DataDir, "apikey.txt");
+            string attachIndex = Path.Combine(DataDir, "attachments.tsv");
+            string attachRoot = Path.Combine(BaseDir, "증빙");
 
             if (!File.Exists(masterPath))
             {
@@ -124,7 +126,11 @@ namespace PaymentAlert
             // ── 경고 문구 조립 ───────────────────────────────────
             string warningText = BuildWarning(cache, years, warnings, masterPath);
 
-            var form = new AlertForm(rows, set.Overdue, cal, today, warningText);
+            var store = new AttachmentStore(attachIndex, attachRoot);
+            try { store.Load(); }
+            catch (Exception ex) { Log("증빙 목록을 읽지 못했습니다: " + ex.Message); }
+
+            var form = new AlertForm(rows, set.Overdue, cal, today, warningText, store);
             Application.Run(form);
 
             // ── 저장 ─────────────────────────────────────────────

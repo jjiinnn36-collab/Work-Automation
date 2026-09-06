@@ -81,6 +81,22 @@ namespace PaymentAlert
         public string Key { get { return 연도 + "\t" + Id; } }
     }
 
+    /// <summary>
+    /// 단계별 증빙 파일. 신고서·납부 영수증 등을 붙여 둔다.
+    /// 원본이 옮겨지거나 지워져도 남도록 증빙 폴더로 복사해 보관한다.
+    /// </summary>
+    public class Attachment
+    {
+        public int 연도;
+        public string Id;
+        public string 단계;        // 첨부 시점의 단계명
+        public string 저장파일;     // 증빙 폴더 기준 상대 경로
+        public string 원본파일명;
+        public DateTime 첨부일시;
+
+        public string Key { get { return 연도 + "\t" + Id; } }
+    }
+
     /// <summary>특정 연도에 실제로 발생하는 하나의 기한 이벤트.</summary>
     public class Occurrence
     {

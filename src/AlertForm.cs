@@ -15,6 +15,7 @@ namespace PaymentAlert
         readonly List<AlertRow> overdue;
         readonly BusinessDayCalendar cal;
         readonly DateTime today;
+        readonly AttachmentStore store;
 
         readonly Panel listPanel;
         readonly Button closeButton;
@@ -29,12 +30,14 @@ namespace PaymentAlert
         static readonly Color 흐린글씨 = Color.FromArgb(110, 112, 120);
 
         public AlertForm(List<AlertRow> rows, List<AlertRow> overdue,
-                         BusinessDayCalendar cal, DateTime today, string warningText)
+                         BusinessDayCalendar cal, DateTime today, string warningText,
+                         AttachmentStore store)
         {
             this.rows = rows;
             this.overdue = overdue ?? new List<AlertRow>();
             this.cal = cal;
             this.today = today;
+            this.store = store;
 
             Text = "납부 기한 알림 - " + today.ToString("yyyy-MM-dd");
             StartPosition = FormStartPosition.CenterScreen;
@@ -90,14 +93,19 @@ namespace PaymentAlert
             int ry = 0;
             foreach (AlertRow r in rows)
             {
-                var view = new RowView(this, r, cal, today);
+                var view = new RowView(this, r, cal, today, store);
                 view.Panel.Location = new Point(0, ry);
                 listPanel.Controls.Add(view.Panel);
                 views[r] = view;
                 ry += view.Panel.Height + 8;
             }
 
-            listPanel.Height = Math.Max(Math.Min(ry, 420), 60);
+            // 목록 높이를 고정하면 행이 커질 때 마지막 행이 잘린다.
+            // 화면에서 쓸 수 있는 높이를 계산해 거기에 맞춘다.
+            int 아래여백 = 150;   // 기한초과 요약 + 상태 문구 + 닫기 버튼 + 창 테두리
+            int 최대목록 = Screen.PrimaryScreen.WorkingArea.Height - y - 아래여백;
+            if (최대목록 < 200) 최대목록 = 200;
+            listPanel.Height = Math.Max(Math.Min(ry, 최대목록), 60);
             y += listPanel.Height + 10;
 
             if (this.overdue.Count > 0)
@@ -198,6 +206,7 @@ namespace PaymentAlert
             readonly AlertRow row;
             readonly BusinessDayCalendar cal;
             readonly DateTime today;
+            readonly AttachmentStore store;
 
             public readonly Panel Panel;
             readonly Label 제목;
@@ -207,17 +216,22 @@ namespace PaymentAlert
             readonly Button 진행;
             readonly Button 대기;
             readonly Button 되돌리기;
+            readonly Label 증빙;
+            readonly Button 첨부;
+            readonly Button 열기;
 
-            public RowView(AlertForm owner, AlertRow row, BusinessDayCalendar cal, DateTime today)
+            public RowView(AlertForm owner, AlertRow row, BusinessDayCalendar cal, DateTime today,
+                           AttachmentStore store)
             {
                 this.owner = owner;
                 this.row = row;
                 this.cal = cal;
                 this.today = today;
+                this.store = store;
 
                 Panel = new Panel();
                 Panel.Width = 626;
-                Panel.Height = 86;
+                Panel.Height = 110;
                 Panel.BorderStyle = BorderStyle.FixedSingle;
                 Panel.BackColor = Color.White;
 
@@ -263,6 +277,80 @@ namespace PaymentAlert
                 되돌리기.Location = new Point(508, 50);
                 되돌리기.Click += delegate { Revert(); };
                 Panel.Controls.Add(되돌리기);
+
+                증빙 = new Label();
+                증빙.AutoSize = true;
+                증빙.Location = new Point(40, 84);
+                증빙.ForeColor = 흐린글씨;
+                Panel.Controls.Add(증빙);
+
+                첨부 = new Button();
+                첨부.Text = "증빙 첨부";
+                첨부.Size = new Size(104, 26);
+                첨부.Location = new Point(398, 80);
+                첨부.Click += delegate { AttachFile(); };
+                Panel.Controls.Add(첨부);
+
+                열기 = new Button();
+                열기.Text = "증빙 열기";
+                열기.Size = new Size(104, 26);
+                열기.Location = new Point(508, 80);
+                열기.Click += delegate { OpenFolder(); };
+                Panel.Controls.Add(열기);
+            }
+
+            /// <summary>증빙 파일을 골라 보관소에 복사한다. 현재 단계로 기록된다.</summary>
+            void AttachFile()
+            {
+                using (var dlg = new OpenFileDialog())
+                {
+                    dlg.Title = row.Occ.Item.표시명 + " — 증빙 첨부 (" + row.현재단계명 + ")";
+                    dlg.Filter = "증빙 파일 (*.pdf;*.jpg;*.png;*.xlsx;*.hwp;*.docx)" +
+                                 "|*.pdf;*.jpg;*.jpeg;*.png;*.xlsx;*.xls;*.hwp;*.hwpx;*.docx|모든 파일 (*.*)|*.*";
+                    dlg.Multiselect = true;
+                    if (dlg.ShowDialog(owner) != DialogResult.OK) return;
+
+                    int ok = 0;
+                    var failed = new List<string>();
+                    foreach (string f in dlg.FileNames)
+                    {
+                        try
+                        {
+                            store.Attach(row.Occ.연도, row.Occ.Item.Id, row.현재단계명, f);
+                            ok++;
+                        }
+                        catch (Exception ex)
+                        {
+                            failed.Add(System.IO.Path.GetFileName(f) + " — " + ex.Message);
+                        }
+                    }
+
+                    if (failed.Count > 0)
+                    {
+                        MessageBox.Show(owner,
+                            string.Format("{0}건은 첨부하지 못했습니다.\r\n\r\n{1}",
+                                failed.Count, string.Join("\r\n", failed.ToArray())),
+                            "증빙 첨부", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                    if (ok > 0) owner.RefreshState();
+                }
+            }
+
+            /// <summary>증빙 폴더를 탐색기로 연다.</summary>
+            void OpenFolder()
+            {
+                string folder = store.FolderFor(row.Occ.연도, row.Occ.Item.Id);
+                try
+                {
+                    if (!System.IO.Directory.Exists(folder))
+                        System.IO.Directory.CreateDirectory(folder);
+                    System.Diagnostics.Process.Start("explorer.exe", "\"" + folder + "\"");
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(owner, "폴더를 열지 못했습니다.\r\n" + folder + "\r\n\r\n" + ex.Message,
+                        "증빙", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
             }
 
             void Advance()
@@ -344,6 +432,24 @@ namespace PaymentAlert
                 대기.Enabled = !handled;
                 되돌리기.Visible = row.Status.단계 > 0;
                 되돌리기.Location = new Point(508, done ? 14 : 50);
+
+                var atts = store.For(row.Occ.연도, row.Occ.Item.Id);
+                if (atts.Count == 0)
+                {
+                    증빙.Text = "증빙 없음";
+                    증빙.ForeColor = 흐린글씨;
+                    열기.Enabled = false;
+                }
+                else
+                {
+                    var stages = new List<string>();
+                    foreach (Attachment a in atts)
+                        if (!stages.Contains(a.단계)) stages.Add(a.단계);
+                    증빙.Text = string.Format("증빙 {0}건 — {1}",
+                        atts.Count, string.Join(", ", stages.ToArray()));
+                    증빙.ForeColor = 완료색;
+                    열기.Enabled = true;
+                }
             }
 
             static string 금액표시(Occurrence occ)

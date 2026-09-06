@@ -54,7 +54,10 @@ namespace PaymentAlert.Tests
             CheckTrue("표시 대상이 1건 이상", rows.Count >= 1);
 
             Console.WriteLine("\n[GUI] 폼 생성");
-            var form = new AlertForm(rows, set.Overdue, cal, today, "공휴일 자료 시험용 경고 문구입니다.");
+            string tmpRoot = Path.Combine(Path.GetTempPath(), "pa_att_test");
+            var store = new AttachmentStore(Path.Combine(tmpRoot, "attachments.tsv"), tmpRoot);
+            store.Load();
+            var form = new AlertForm(rows, set.Overdue, cal, today, "공휴일 자료 시험용 경고 문구입니다.", store);
             form.CreateControl();
 
             CheckTrue("폼 생성됨", form != null);

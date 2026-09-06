@@ -7,7 +7,7 @@ set CSC=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe
 if not exist "%CSC%" set CSC=C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe
 if not exist "%CSC%" goto :nocsc
 
-set CORE=src\Model.cs src\Tsv.cs src\BusinessDays.cs src\Holidays.cs src\Repository.cs src\Scheduler.cs
+set CORE=src\Model.cs src\Tsv.cs src\BusinessDays.cs src\Holidays.cs src\Repository.cs src\Scheduler.cs src\Attachments.cs
 set OUTDIR=%TEMP%\pa_tests
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 

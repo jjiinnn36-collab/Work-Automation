@@ -1,6 +1,10 @@
 # ── 사내 업무 정보 — 외부 저장소에 올리지 않는다 ────────────
 data/payment-master.tsv
 data/amounts.tsv
+data/attachments.tsv
+
+# 첨부한 증빙 원본 (신고서·영수증 등)
+증빙/
 data/status.tsv
 data/run.log
 data/apikey.txt
