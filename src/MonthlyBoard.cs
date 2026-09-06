@@ -53,8 +53,8 @@ namespace PaymentAlert
             TopMost = true;
             BackColor = 배경;
             Font = new Font("맑은 고딕", 9f);
-            MinimumSize = new Size(260, 220);
-            ClientSize = new Size(330, 460);
+            MinimumSize = new Size(320, 220);
+            ClientSize = new Size(390, 460);
 
             headerLabel = new Label();
             headerLabel.AutoSize = false;
@@ -68,7 +68,7 @@ namespace PaymentAlert
             summaryLabel = new Label();
             summaryLabel.AutoSize = false;
             summaryLabel.Dock = DockStyle.Top;
-            summaryLabel.Height = 22;
+            summaryLabel.Height = 38;
             summaryLabel.TextAlign = ContentAlignment.MiddleLeft;
             summaryLabel.Padding = new Padding(10, 0, 0, 0);
             summaryLabel.ForeColor = 흐린글씨;
@@ -158,8 +158,23 @@ namespace PaymentAlert
                 if (IsDone(o, status)) done++;
             }
 
-            summaryLabel.Text = string.Format("전체 {0}건 · 완료 {1}건 · 남은 {2}건",
-                month.Count, done, month.Count - done);
+            // 이번 달 나갈 돈을 한 줄로 보여준다. 금액을 모르는 건이 있으면 함께 알린다.
+            decimal 합계 = 0;
+            int 미확인 = 0;
+            foreach (Occurrence o in month)
+            {
+                if (o.실제금액 != null) 합계 += o.실제금액.금액;
+                else if (o.Item.고정금액.HasValue) 합계 += o.Item.고정금액.Value;
+                else if (o.Item.금액규칙 != "해당없음" && o.Item.금액규칙.Length > 0) 미확인++;
+            }
+
+            string 합계문구;
+            if (합계 == 0 && 미확인 == 0) 합계문구 = "납부 금액 없음";
+            else if (미확인 == 0) 합계문구 = string.Format("합계 {0:N0}원", 합계);
+            else 합계문구 = string.Format("확인분 {0:N0}원 · 미확인 {1}건", 합계, 미확인);
+
+            summaryLabel.Text = string.Format("전체 {0}건 · 완료 {1}건 · 남은 {2}건\r\n{3}",
+                month.Count, done, month.Count - done, 합계문구);
             summaryLabel.ForeColor = (done == month.Count) ? 완료색 : 흐린글씨;
 
             int y = 0;
@@ -294,11 +309,18 @@ namespace PaymentAlert
             요일.ForeColor = 밀림 ? 임박색 : 흐린글씨;
             p.Controls.Add(요일);
 
+            // 금액은 오른쪽 끝에 맞춰 두어 자릿수를 세로로 견줄 수 있게 한다.
+            const int 금액폭 = 118;
+
             var 이름 = new Label();
             이름.Text = o.Item.비용명;
             이름.Font = new Font("맑은 고딕", 9.75f, done ? FontStyle.Regular : FontStyle.Bold);
-            이름.AutoSize = true;
+            이름.AutoSize = false;
+            이름.AutoEllipsis = true;          // 이름이 길면 말줄임. 금액을 밀어내지 않는다.
             이름.Location = new Point(52, 6);
+            이름.Size = new Size(Math.Max(p.Width - 52 - 금액폭 - 12, 60), 20);
+            이름.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+            이름.TextAlign = ContentAlignment.MiddleLeft;
             이름.ForeColor = done ? 흐린글씨 : 진한글씨;
             p.Controls.Add(이름);
 
@@ -321,19 +343,48 @@ namespace PaymentAlert
             }
             p.Controls.Add(상태);
 
+            // 금액 표시
+            //  - 그 해 확인된 금액이 있으면 그것
+            //  - 없으면 마스터의 고정금액
+            //  - 납부가 없는 건(제출만 등)은 비워 둔다
+            //  - 그 밖에는 '미확인'. 빈칸으로 두면 0원으로 오해할 수 있다.
+            string 금액문구;
+            bool 금액확정 = false;
+            if (o.실제금액 != null)
+            {
+                금액문구 = string.Format("{0:N0}", o.실제금액.금액);
+                금액확정 = true;
+            }
+            else if (o.Item.고정금액.HasValue)
+            {
+                금액문구 = string.Format("{0:N0}", o.Item.고정금액.Value);
+                금액확정 = true;
+            }
+            else if (o.Item.금액규칙 == "해당없음" || o.Item.금액규칙.Length == 0)
+            {
+                금액문구 = "";
+            }
+            else
+            {
+                금액문구 = "미확인";
+            }
+
             var 금액 = new Label();
-            금액.Text = o.실제금액 != null
-                ? string.Format("{0:N0}", o.실제금액.금액)
-                : (o.Item.고정금액.HasValue ? string.Format("{0:N0}", o.Item.고정금액.Value) : "");
-            금액.AutoSize = true;
-            금액.Location = new Point(10, 47);
-            금액.Visible = false;   // 폭이 좁아 기본은 숨김. 도구설명으로 보여준다.
+            금액.Text = 금액문구;
+            금액.AutoSize = false;
+            금액.Size = new Size(금액폭, 20);
+            금액.Location = new Point(p.Width - 금액폭 - 10, 6);
+            금액.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            금액.TextAlign = ContentAlignment.MiddleRight;
+            금액.Font = new Font("맑은 고딕", 9.75f,
+                (금액확정 && !done) ? FontStyle.Bold : FontStyle.Regular);
+            금액.ForeColor = done ? 흐린글씨 : (금액확정 ? 진한글씨 : 임박색);
             p.Controls.Add(금액);
 
             string tip = string.Format("{0} ({1})\n기한 {2}\n{3}",
                 o.Item.비용명, o.Item.기관,
                 o.원기한일.ToString("yyyy-MM-dd (ddd)", ko) + "  → 실납부 " + o.보정기한일.ToString("MM-dd (ddd)", ko),
-                금액.Text.Length > 0 ? 금액.Text + "원" : "금액 미확인");
+                금액확정 ? 금액문구 + "원" : (금액문구.Length == 0 ? "납부 없음" : "금액 미확인 (" + o.Item.금액규칙 + ")"));
             var tt = new ToolTip();
             tt.SetToolTip(p, tip);
             tt.SetToolTip(이름, tip);
