@@ -146,12 +146,27 @@ namespace PaymentAlert
             return map;
         }
 
+        /// <summary>
+        /// 진행 상태를 저장한다.
+        /// 파일을 다시 읽어 이번 실행에서 건드리지 않은 기록은 그대로 두고,
+        /// 사용자가 실제로 바꾼 것만 덮어쓴다. 팝업과 보드가 동시에 떠 있어도
+        /// 한쪽이 다른 쪽의 변경을 지우지 않는다.
+        /// </summary>
         public static void SaveStatus(string path, IEnumerable<StatusRecord> records, List<PaymentItem> master)
         {
             var flowById = new Dictionary<string, Flow>(StringComparer.OrdinalIgnoreCase);
             foreach (PaymentItem it in master) flowById[it.Id] = it.진행흐름;
 
-            var list = new List<StatusRecord>(records);
+            // 디스크에 있는 내용을 기준으로 삼는다.
+            Dictionary<string, StatusRecord> merged = LoadStatus(path);
+
+            foreach (StatusRecord st in records)
+            {
+                if (!st.변경됨) continue;          // 손대지 않은 기록은 건드리지 않는다
+                merged[st.Key] = st;
+            }
+
+            var list = new List<StatusRecord>(merged.Values);
             list.Sort(delegate(StatusRecord a, StatusRecord b)
             {
                 int c = a.연도.CompareTo(b.연도);

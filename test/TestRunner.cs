@@ -231,12 +231,14 @@ namespace PaymentAlert.Tests
             s1.변경일시 = new DateTime(2026, 4, 17, 9, 12, 0);
             s1.최종확인일 = new DateTime(2026, 4, 20);
             s1.메모 = "결재 상신, 승인 대기";
+            s1.변경됨 = true;      // 사용자가 실제로 바꾼 기록만 저장된다
             save.Add(s1);
 
             var s2 = new StatusRecord();
             s2.연도 = 2026; s2.Id = "fx-05"; s2.단계 = 1;   // 제출완료
             s2.변경일시 = new DateTime(2026, 2, 24, 10, 41, 0);
             s2.최종확인일 = new DateTime(2026, 2, 24);
+            s2.변경됨 = true;
             save.Add(s2);
 
             Repository.SaveStatus(stPath, save, master);
@@ -264,10 +266,23 @@ namespace PaymentAlert.Tests
 
             // 덮어쓰기 후에도 정상인지
             s1.단계 = 2;   // 납부완료
+            s1.변경됨 = true;
             Repository.SaveStatus(stPath, save, master);
             var loaded2 = Repository.LoadStatus(stPath);
             Check("덮어쓰기 후 단계 갱신", loaded2[K1].단계, 2);
             Check("덮어쓰기 후 건수 유지", loaded2.Count, 2);
+
+            // 손대지 않은 기록은 파일에 남기지 않는다.
+            // 단계 0 짜리 빈 행이 쌓이는 것을 막고, 동시 실행 시 덮어쓰기도 막는다.
+            var 손안댐 = new StatusRecord();
+            손안댐.연도 = 2026; 손안댐.Id = "fx-07"; 손안댐.단계 = 0;   // 변경됨 = false
+            var 섞음 = new List<StatusRecord>(save);
+            섞음.Add(손안댐);
+            Repository.SaveStatus(stPath, 섞음, master);
+            var loaded3 = Repository.LoadStatus(stPath);
+            CheckTrue("손대지 않은 기록은 저장 안 됨", !loaded3.ContainsKey("2026	fx-07"));
+            Check("기존 기록은 그대로", loaded3.Count, 2);
+
             File.Delete(stPath);
 
             Console.WriteLine("\n[11d] 연도별 실제 금액");
@@ -309,6 +324,48 @@ namespace PaymentAlert.Tests
             var noAm = Repository.LoadAmounts(Path.Combine(Path.GetTempPath(), "pa_no_such.tsv"), null);
             Check("파일이 없으면 빈 사전", noAm.Count, 0);
             File.Delete(amPath);
+
+            Console.WriteLine("\n[11c-2] 동시 실행 시 서로의 변경을 지우지 않는다");
+            // 팝업이 열려 있는 동안 보드에서 되돌리면, 팝업이 닫힐 때
+            // 옛 메모리 내용으로 덮어써서 되돌린 것이 사라지는 문제가 있었다.
+            string cPath = Path.Combine(Path.GetTempPath(), "pa_concurrent.tsv");
+            if (File.Exists(cPath)) File.Delete(cPath);
+
+            // 팝업이 시작할 때 읽은 상태 (fx-03 = 전표결재 1, fx-04 = 납부 전 0)
+            var 팝업메모리 = new List<StatusRecord>();
+            var pa = new StatusRecord();
+            pa.연도 = 2026; pa.Id = "fx-03"; pa.단계 = 1; pa.변경됨 = true;
+            팝업메모리.Add(pa);
+            var pb = new StatusRecord();
+            pb.연도 = 2026; pb.Id = "fx-04"; pb.단계 = 0;   // 손대지 않음
+            팝업메모리.Add(pb);
+            Repository.SaveStatus(cPath, 팝업메모리, master);
+
+            // 보드가 다른 건(fx-05)을 바꾼다
+            var 보드변경 = new StatusRecord();
+            보드변경.연도 = 2026; 보드변경.Id = "fx-05"; 보드변경.단계 = 1; 보드변경.변경됨 = true;
+            Repository.SaveStatus(cPath, new StatusRecord[] { 보드변경 }, master);
+
+            // 팝업이 닫히며 자기 메모리를 저장한다 (fx-05 는 모르는 상태)
+            Repository.SaveStatus(cPath, 팝업메모리, master);
+
+            var 최종 = Repository.LoadStatus(cPath);
+            CheckTrue("보드가 바꾼 건이 살아남음", 최종.ContainsKey("2026\tfx-05"));
+            Check("보드 변경값 유지", 최종["2026\tfx-05"].단계, 1);
+            Check("팝업 변경값도 유지", 최종["2026\tfx-03"].단계, 1);
+            CheckTrue("손대지 않은 기본값은 기록되지 않음", !최종.ContainsKey("2026\tfx-04"));
+
+            // 되돌리기: 파일을 다시 읽어 바꾼 뒤 그것만 저장
+            var 다시읽음 = Repository.LoadStatus(cPath);
+            StatusRecord 되돌릴것 = 다시읽음["2026\tfx-03"];
+            되돌릴것.단계 = 0;
+            되돌릴것.변경됨 = true;
+            Repository.SaveStatus(cPath, new StatusRecord[] { 되돌릴것 }, master);
+
+            var 되돌린뒤 = Repository.LoadStatus(cPath);
+            Check("되돌리기 반영", 되돌린뒤["2026\tfx-03"].단계, 0);
+            Check("다른 건은 그대로", 되돌린뒤["2026\tfx-05"].단계, 1);
+            File.Delete(cPath);
 
             Console.WriteLine("\n[11e] 증빙 첨부 보관");
             string attRoot = Path.Combine(Path.GetTempPath(), "pa_att_" + Guid.NewGuid().ToString("N").Substring(0, 8));

@@ -127,6 +127,13 @@ namespace PaymentAlert
         public DateTime? 최종확인일;
         public string 메모 = "";
 
+        /// <summary>
+        /// 이번 실행에서 사용자가 실제로 바꾼 기록인지. 파일에 저장하지 않는다.
+        /// 저장할 때 이 표시가 있는 것만 덮어써서, 팝업과 보드가 동시에 떠 있어도
+        /// 한쪽이 다른 쪽의 변경을 지우지 않게 한다.
+        /// </summary>
+        public bool 변경됨;
+
         public string Key { get { return 연도 + "\t" + Id; } }
     }
 

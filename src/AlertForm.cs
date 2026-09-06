@@ -359,6 +359,7 @@ namespace PaymentAlert
                 row.Status.단계++;
                 row.Status.변경일시 = DateTime.Now;
                 row.Status.최종확인일 = today;
+                row.Status.변경됨 = true;
                 row.오늘단계변경 = true;
                 owner.RefreshState();
             }
@@ -366,6 +367,7 @@ namespace PaymentAlert
             void Defer()
             {
                 row.Status.최종확인일 = today;
+                row.Status.변경됨 = true;
                 owner.RefreshState();
             }
 
@@ -374,6 +376,7 @@ namespace PaymentAlert
                 if (row.Status.단계 <= 0) return;
                 row.Status.단계--;
                 row.Status.변경일시 = DateTime.Now;
+                row.Status.변경됨 = true;
                 owner.RefreshState();
             }
 

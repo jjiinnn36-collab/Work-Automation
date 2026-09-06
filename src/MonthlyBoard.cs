@@ -85,7 +85,7 @@ namespace PaymentAlert
             foot.TextAlign = ContentAlignment.MiddleLeft;
             foot.Padding = new Padding(10, 0, 0, 0);
             foot.ForeColor = 흐린글씨;
-            foot.Text = "항목을 두 번 누르면 증빙 폴더가 열립니다.";
+            foot.Text = "두 번 누르면 증빙 폴더 · 오른쪽 클릭하면 되돌리기";
 
             Controls.Add(listPanel);
             Controls.Add(foot);
@@ -398,7 +398,98 @@ namespace PaymentAlert
             상태.MouseDoubleClick += dbl;
             날짜.MouseDoubleClick += dbl;
 
+            // 오른쪽 클릭으로 단계를 되돌린다.
+            // 실수로 완료 처리하면 팝업에 더는 뜨지 않아 프로그램이 조용해진다.
+            // 그 상태로 기한이 지나가는 것이 이 프로그램에서 가장 위험한 실패다.
+            var menu = new ContextMenuStrip();
+            string 현재 = StageName(o, status);
+
+            var 되돌리기 = new ToolStripMenuItem("이전 단계로 되돌리기");
+            되돌리기.Enabled = HasPrevious(o, status);
+            되돌리기.Click += delegate { RevertStage(o); };
+            menu.Items.Add(되돌리기);
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            var 폴더 = new ToolStripMenuItem("증빙 폴더 열기");
+            폴더.Click += delegate { OpenAttachments(o); };
+            menu.Items.Add(폴더);
+
+            var 안내 = new ToolStripMenuItem(string.Format("현재 단계: {0}", 현재));
+            안내.Enabled = false;
+            menu.Items.Add(안내);
+
+            p.ContextMenuStrip = menu;
+            이름.ContextMenuStrip = menu;
+            상태.ContextMenuStrip = menu;
+            날짜.ContextMenuStrip = menu;
+            요일.ContextMenuStrip = menu;
+            금액.ContextMenuStrip = menu;
+
             return p;
+        }
+
+        static bool HasPrevious(Occurrence o, Dictionary<string, StatusRecord> status)
+        {
+            StatusRecord st;
+            if (!status.TryGetValue(o.Key, out st)) return false;
+            return st.단계 > 0;
+        }
+
+        /// <summary>
+        /// 한 단계 되돌린다. 파일을 다시 읽어 최신 상태에서 바꾸고, 바꾼 것만 저장한다.
+        /// 팝업이 동시에 떠 있어도 서로의 변경을 지우지 않는다.
+        /// </summary>
+        void RevertStage(Occurrence o)
+        {
+            try
+            {
+                string statusPath = Path.Combine(dataDir, "status.tsv");
+                Dictionary<string, StatusRecord> status = Repository.LoadStatus(statusPath);
+
+                StatusRecord st;
+                if (!status.TryGetValue(o.Key, out st) || st.단계 <= 0)
+                {
+                    MessageBox.Show(this, "되돌릴 단계가 없습니다.", "되돌리기",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    Reload();
+                    return;
+                }
+
+                string[] stages = Stages.For(o.Item.진행흐름);
+                int 이전 = st.단계 - 1;
+                if (st.단계 >= stages.Length) st.단계 = stages.Length - 1;
+
+                string 확인문구 = string.Format(
+                    "{0} ({1})\r\n기한 {2}\r\n\r\n{3}  →  {4}\r\n\r\n되돌릴까요?",
+                    o.Item.비용명, o.Item.기관,
+                    o.원기한일.ToString("yyyy-MM-dd"),
+                    stages[st.단계], stages[이전]);
+
+                if (MessageBox.Show(this, 확인문구, "단계 되돌리기",
+                        MessageBoxButtons.YesNo, MessageBoxIcon.Question,
+                        MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                    return;
+
+                st.단계 = 이전;
+                st.변경일시 = DateTime.Now;
+                st.변경됨 = true;
+
+                // 되돌렸으면 오늘 확인 표시도 지운다. 그래야 팝업이 다시 물어본다.
+                st.최종확인일 = null;
+
+                var warnings = new List<string>();
+                List<PaymentItem> master = Repository.LoadMaster(
+                    Path.Combine(dataDir, "payment-master.tsv"), warnings);
+
+                Repository.SaveStatus(statusPath, new StatusRecord[] { st }, master);
+                Reload();
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "되돌리지 못했습니다.\r\n\r\n" + ex.Message,
+                    "되돌리기", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
         }
 
         void OpenAttachments(Occurrence o)
