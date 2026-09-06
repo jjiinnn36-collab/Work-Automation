@@ -270,6 +270,46 @@ namespace PaymentAlert.Tests
             Check("덮어쓰기 후 건수 유지", loaded2.Count, 2);
             File.Delete(stPath);
 
+            Console.WriteLine("\n[11d] 연도별 실제 금액");
+            string amPath = Path.Combine(Path.GetTempPath(), "pa_amounts.tsv");
+            File.WriteAllText(amPath,
+                "연도\tid\t금액\t출처\t확인일\t비고\r\n" +
+                "2026\tfx-03\t5838089\t고지서\t2026-05-13\t1차\r\n" +
+                "2026\tfx-04\t1,840,245\t통보문\t2026-03-11\t쉼표 있는 금액\r\n" +
+                "2027\tfx-03\t6000000\t고지서\t2027-05-12\t다음 해는 금액이 다르다\r\n" +
+                "2026\tfx-05\t안내문참조\t\t\t숫자가 아닌 값\r\n",
+                new System.Text.UTF8Encoding(true));
+
+            var amWarn = new List<string>();
+            var amounts = Repository.LoadAmounts(amPath, amWarn);
+            Check("유효한 금액만 적재", amounts.Count, 3);
+            Check("숫자가 아닌 행은 경고", amWarn.Count, 1);
+            Check("금액 보존", amounts["2026\tfx-03"].금액, 5838089);
+            Check("쉼표 있는 금액 파싱", amounts["2026\tfx-04"].금액, 1840245);
+            Check("출처 보존", amounts["2026\tfx-03"].출처, "고지서");
+
+            // 같은 항목이라도 해가 바뀌면 다른 금액이어야 한다.
+            // 마스터의 고정금액에 넣었다면 2027년에 2026년 금액을 보여주게 된다.
+            Check("연도별로 다른 금액", amounts["2027\tfx-03"].금액, 6000000);
+
+            var occAm = Scheduler.BuildOccurrences(master, cal, new DateTime(2026, 6, 15), amounts);
+            Occurrence o26 = null, o27 = null, oNone = null;
+            foreach (Occurrence o in occAm)
+            {
+                if (o.Item.Id == "fx-03" && o.연도 == 2026) o26 = o;
+                if (o.Item.Id == "fx-03" && o.연도 == 2027) o27 = o;
+                if (o.Item.Id == "fx-01" && o.연도 == 2026) oNone = o;
+            }
+            CheckTrue("2026 발생건에 금액이 붙음", o26 != null && o26.실제금액 != null);
+            Check("2026 금액", o26.실제금액.금액, 5838089);
+            Check("2027 금액은 별개", o27.실제금액.금액, 6000000);
+            CheckTrue("금액 자료가 없는 건은 null", oNone != null && oNone.실제금액 == null);
+
+            // 금액 파일이 아예 없어도 알림은 멈추면 안 된다
+            var noAm = Repository.LoadAmounts(Path.Combine(Path.GetTempPath(), "pa_no_such.tsv"), null);
+            Check("파일이 없으면 빈 사전", noAm.Count, 0);
+            File.Delete(amPath);
+
             Console.WriteLine("\n[12] 공휴일 자료 없는 연도는 안전 여유 적용");
             var calNoYear = new BusinessDayCalendar(new DateTime[0], new int[] { 2025 });
             var occs2 = Scheduler.BuildOccurrences(master, calNoYear, new DateTime(2026, 6, 15));

@@ -65,6 +65,22 @@ namespace PaymentAlert
         }
     }
 
+    /// <summary>
+    /// 그 해의 실제 납부금액. 고지서·통보문에서 확인한 값을 담는다.
+    /// 마스터의 고정금액과 달리 연도별로 달라지므로 따로 관리한다.
+    /// </summary>
+    public class AmountRecord
+    {
+        public int 연도;
+        public string Id;
+        public decimal 금액;
+        public string 출처 = "";
+        public DateTime? 확인일;
+        public string 비고 = "";
+
+        public string Key { get { return 연도 + "\t" + Id; } }
+    }
+
     /// <summary>특정 연도에 실제로 발생하는 하나의 기한 이벤트.</summary>
     public class Occurrence
     {
@@ -74,6 +90,7 @@ namespace PaymentAlert
         public DateTime 보정기한일;   // 주말·공휴일이면 다음 영업일
         public DateTime 알림일;
         public bool 공휴일자료없음;   // 해당 연도 공휴일 정보가 없어 보수적으로 계산함
+        public AmountRecord 실제금액;  // 그 해 확인된 금액. 없으면 null
 
         public string Key { get { return 연도 + "\t" + Item.Id; } }
 

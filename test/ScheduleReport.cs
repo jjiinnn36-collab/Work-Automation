@@ -43,7 +43,12 @@ namespace PaymentAlert.Tests
             List<PaymentItem> master = Repository.LoadMaster(masterPath, warnings);
             foreach (string w in warnings) Console.WriteLine("  경고: " + w);
 
-            var occs = Scheduler.BuildOccurrences(master, cal, new DateTime(year, 6, 15));
+            var amountWarn = new List<string>();
+            var amounts = Repository.LoadAmounts("data\\amounts.tsv", amountWarn);
+            foreach (string w in amountWarn) Console.WriteLine("  경고: " + w);
+            Console.WriteLine("금액 자료: " + amounts.Count + "건");
+
+            var occs = Scheduler.BuildOccurrences(master, cal, new DateTime(year, 6, 15), amounts);
             var list = new List<Occurrence>();
             foreach (Occurrence o in occs) if (o.연도 == year) list.Add(o);
             list.Sort(delegate(Occurrence a, Occurrence b) { return a.알림일.CompareTo(b.알림일); });
@@ -51,7 +56,7 @@ namespace PaymentAlert.Tests
             Console.WriteLine("\n" + year + "년 납부 기한 일정 (실제 공휴일 반영)");
             Console.WriteLine(new string('-', 100));
             Console.WriteLine(string.Format("{0,-13} {1,-18} {2,-14} {3,-14} {4,-14} {5,-8} {6}",
-                "id", "비용명", "원기한", "보정기한", "알림일", "흐름", "영업일"));
+                "id", "비용명", "원기한", "보정기한", "알림일", "흐름", "영업일/금액"));
             Console.WriteLine(new string('-', 100));
 
             string prevAlert = "";
@@ -63,12 +68,15 @@ namespace PaymentAlert.Tests
 
                 string moved = o.원기한일 == o.보정기한일 ? "" : " *";
 
-                Console.WriteLine(string.Format("{0,-13} {1,-18} {2,-14} {3,-14} {4,-14} {5,-8} {6}일{7}",
+                string money = o.실제금액 != null
+                    ? string.Format("{0,15:N0}원", o.실제금액.금액)
+                    : "              -";
+                Console.WriteLine(string.Format("{0,-13} {1,-18} {2,-14} {3,-14} {4,-14} {5,-8} {6}일 {7}{8}",
                     o.Item.Id, o.Item.비용명,
                     o.원기한일.ToString("MM-dd(ddd)", ko),
                     o.보정기한일.ToString("MM-dd(ddd)", ko) + moved,
                     alert,
-                    o.Item.진행흐름, o.Item.알림영업일, dup));
+                    o.Item.진행흐름, o.Item.알림영업일, money, dup));
             }
 
             Console.WriteLine(new string('-', 100));

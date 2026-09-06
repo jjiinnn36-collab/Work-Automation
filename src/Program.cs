@@ -57,6 +57,7 @@ namespace PaymentAlert
             string masterPath = Path.Combine(DataDir, "payment-master.tsv");
             string statusPath = Path.Combine(DataDir, "status.tsv");
             string holidayPath = Path.Combine(DataDir, "holidays.tsv");
+            string amountPath = Path.Combine(DataDir, "amounts.tsv");
             string apiKeyPath = Path.Combine(DataDir, "apikey.txt");
 
             if (!File.Exists(masterPath))
@@ -96,7 +97,8 @@ namespace PaymentAlert
             var cal = new BusinessDayCalendar(cache.Dates.Keys, cache.Years);
 
             // ── 표시 대상 계산 ───────────────────────────────────
-            List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today);
+            Dictionary<string, AmountRecord> amounts = Repository.LoadAmounts(amountPath, warnings);
+            List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today, amounts);
             Dictionary<string, StatusRecord> statusMap = Repository.LoadStatus(statusPath);
 
             if (강제표시)

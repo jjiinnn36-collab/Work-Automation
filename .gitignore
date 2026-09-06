@@ -1,5 +1,6 @@
 # ── 사내 업무 정보 — 외부 저장소에 올리지 않는다 ────────────
 data/payment-master.tsv
+data/amounts.tsv
 data/status.tsv
 data/run.log
 data/apikey.txt
@@ -12,6 +13,10 @@ data/apikey.txt
 
 # 인터뷰 명세 (납부 항목 전체가 들어 있음)
 .omc/
+
+# 납부 관련 원본 문서 — 사업자등록번호·가상계좌번호·납부금액 포함
+비용납부내역/
+*.pdf
 
 # ── 빌드 산출물 ──────────────────────────────────────────
 *.exe

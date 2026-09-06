@@ -88,6 +88,43 @@ namespace PaymentAlert
             return items;
         }
 
+        /// <summary>
+        /// 연도별 실제 납부금액을 읽는다. 파일이 없으면 빈 사전을 돌려준다.
+        /// 금액을 모른다고 알림이 멈추면 안 되므로 없어도 정상 동작해야 한다.
+        /// </summary>
+        public static Dictionary<string, AmountRecord> LoadAmounts(string path, List<string> warnings)
+        {
+            var map = new Dictionary<string, AmountRecord>(StringComparer.Ordinal);
+            int lineNo = 1;
+
+            foreach (var row in Tsv.Read(path))
+            {
+                lineNo++;
+                string id = Tsv.Get(row, "id");
+                int year = Tsv.GetInt(row, "연도", 0);
+                if (id.Length == 0 || year == 0) continue;
+
+                decimal? amount = Tsv.GetDecimal(row, "금액");
+                if (!amount.HasValue)
+                {
+                    if (warnings != null)
+                        warnings.Add(string.Format("금액 자료 {0}행({1} {2}): 금액을 숫자로 읽지 못해 건너뜁니다.",
+                            lineNo, year, id));
+                    continue;
+                }
+
+                var a = new AmountRecord();
+                a.연도 = year;
+                a.Id = id;
+                a.금액 = amount.Value;
+                a.출처 = Tsv.Get(row, "출처");
+                a.확인일 = Tsv.GetDate(row, "확인일");
+                a.비고 = Tsv.Get(row, "비고");
+                map[a.Key] = a;
+            }
+            return map;
+        }
+
         public static Dictionary<string, StatusRecord> LoadStatus(string path)
         {
             var map = new Dictionary<string, StatusRecord>(StringComparer.Ordinal);

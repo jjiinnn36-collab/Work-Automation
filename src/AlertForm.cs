@@ -314,7 +314,7 @@ namespace PaymentAlert
                 }
 
                 기한.Text = string.Format("기한 {0}  |  {1}  |  {2}",
-                    row.Occ.보정기한일.ToString("yyyy-MM-dd"), dtext, 금액표시(it));
+                    row.Occ.보정기한일.ToString("yyyy-MM-dd"), dtext, 금액표시(row.Occ));
                 기한.ForeColor = dcolor;
 
                 bool done = row.최종단계도달;
@@ -346,13 +346,18 @@ namespace PaymentAlert
                 되돌리기.Location = new Point(508, done ? 14 : 50);
             }
 
-            static string 금액표시(PaymentItem it)
+            static string 금액표시(Occurrence occ)
             {
+                // 그 해 고지서에서 확인한 실제 금액이 있으면 그것이 우선이다.
+                if (occ.실제금액 != null)
+                    return string.Format("{0:N0}원", occ.실제금액.금액);
+
+                PaymentItem it = occ.Item;
                 if (it.고정금액.HasValue)
                     return string.Format("{0:N0}원", it.고정금액.Value);
                 if (it.금액규칙 == "해당없음" || it.금액규칙.Length == 0)
                     return "금액 없음";
-                return "금액: " + it.금액규칙;
+                return "금액 미확인 (" + it.금액규칙 + ")";
             }
         }
     }

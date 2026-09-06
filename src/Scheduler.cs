@@ -35,6 +35,13 @@ namespace PaymentAlert
         public static List<Occurrence> BuildOccurrences(
             List<PaymentItem> items, BusinessDayCalendar cal, DateTime today)
         {
+            return BuildOccurrences(items, cal, today, null);
+        }
+
+        public static List<Occurrence> BuildOccurrences(
+            List<PaymentItem> items, BusinessDayCalendar cal, DateTime today,
+            Dictionary<string, AmountRecord> amounts)
+        {
             var result = new List<Occurrence>();
             foreach (int year in TargetYears(today))
             {
@@ -53,6 +60,12 @@ namespace PaymentAlert
                     {
                         occ.공휴일자료없음 = true;
                         occ.알림일 = occ.알림일.AddDays(-안전여유일);
+                    }
+
+                    if (amounts != null)
+                    {
+                        AmountRecord a;
+                        if (amounts.TryGetValue(occ.Key, out a)) occ.실제금액 = a;
                     }
 
                     result.Add(occ);
