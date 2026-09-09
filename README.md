@@ -96,6 +96,13 @@ PDF 파일을 `import-notice.bat` 위로 끌어다 놓으면 납부기한과 금
 
 `build.bat` 을 더블클릭하면 exe가 만들어진다. 별도 설치는 필요 없다.
 
+빌드 후 알림 팝업을 직접 띄워보려면 `start-alert.bat` 을 더블클릭한다.
+
+> PowerShell 에서 `PaymentAlert.exe` 라고만 치면
+> "실행할 수 있는 프로그램 이름으로 인식되지 않습니다" 오류가 난다.
+> PowerShell 은 현재 폴더를 자동으로 뒤지지 않기 때문이다. `.\PaymentAlert.exe` 처럼
+> `.\` 를 붙이거나, `start-alert.bat` 을 쓰면 된다.
+
 `run-tests.bat` 을 실행하면 날짜 계산이 맞는지 확인할 수 있다.
 연간 일정표가 함께 출력되므로 눈으로 검산해 볼 수 있다.
 다른 연도는 `run-tests.bat 2027` 처럼 연도를 붙인다.
