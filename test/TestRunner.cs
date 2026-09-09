@@ -367,6 +367,43 @@ namespace PaymentAlert.Tests
             Check("다른 건은 그대로", 되돌린뒤["2026\tfx-05"].단계, 1);
             File.Delete(cPath);
 
+            Console.WriteLine("\n[11d-2] 추적 시작일 이전 건은 아예 다루지 않는다");
+            // 프로그램을 쓰기 전의 건들이 '기한초과 미처리'로 잡히는 것을 막는 장치.
+            string sdPath = Path.Combine(Path.GetTempPath(), "pa_startdate.txt");
+
+            File.WriteAllText(sdPath,
+                "# 주석은 무시\r\n2026-06-01\r\n", new System.Text.UTF8Encoding(true));
+            DateTime? sd = Repository.LoadStartDate(sdPath);
+            CheckTrue("시작일을 읽음", sd.HasValue);
+            Check("시작일 값", sd.Value.ToString("yyyy-MM-dd"), "2026-06-01");
+
+            var 제한없음 = Scheduler.BuildOccurrences(master, cal, new DateTime(2026, 6, 15), null, null);
+            var 제한있음 = Scheduler.BuildOccurrences(master, cal, new DateTime(2026, 6, 15), null, sd);
+            CheckTrue("시작일을 주면 건수가 줄어든다", 제한있음.Count < 제한없음.Count);
+
+            bool 이전건없음 = true;
+            foreach (Occurrence o in 제한있음)
+                if (o.보정기한일 < sd.Value) 이전건없음 = false;
+            CheckTrue("시작일 이전 기한이 하나도 없음", 이전건없음);
+
+            // 2025년 건은 전부 빠져야 한다
+            int y2025 = 0;
+            foreach (Occurrence o in 제한있음) if (o.연도 == 2025) y2025++;
+            Check("작년 건 전부 제외", y2025, 0);
+
+            // 시작일 이후 건은 그대로 남는다
+            bool 이후건유지 = false;
+            foreach (Occurrence o in 제한있음)
+                if (o.연도 == 2026 && o.보정기한일 >= sd.Value) 이후건유지 = true;
+            CheckTrue("시작일 이후 건은 유지", 이후건유지);
+
+            // 파일이 없거나 형식이 잘못되면 제한 없음으로 본다
+            File.Delete(sdPath);
+            CheckTrue("파일이 없으면 제한 없음", !Repository.LoadStartDate(sdPath).HasValue);
+            File.WriteAllText(sdPath, "날짜아님\r\n", new System.Text.UTF8Encoding(true));
+            CheckTrue("형식이 잘못되면 제한 없음", !Repository.LoadStartDate(sdPath).HasValue);
+            File.Delete(sdPath);
+
             Console.WriteLine("\n[11e] 증빙 첨부 보관");
             string attRoot = Path.Combine(Path.GetTempPath(), "pa_att_" + Guid.NewGuid().ToString("N").Substring(0, 8));
             string attIndex = Path.Combine(attRoot, "attachments.tsv");

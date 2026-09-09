@@ -42,6 +42,18 @@ namespace PaymentAlert
             List<PaymentItem> items, BusinessDayCalendar cal, DateTime today,
             Dictionary<string, AmountRecord> amounts)
         {
+            return BuildOccurrences(items, cal, today, amounts, null);
+        }
+
+        /// <summary>
+        /// 발생 이벤트를 만든다.
+        /// 시작일이 주어지면 그보다 기한이 이른 건은 아예 만들지 않는다.
+        /// 프로그램을 쓰기 전의 건들이 미처리로 잡히는 것을 막기 위한 것이다.
+        /// </summary>
+        public static List<Occurrence> BuildOccurrences(
+            List<PaymentItem> items, BusinessDayCalendar cal, DateTime today,
+            Dictionary<string, AmountRecord> amounts, DateTime? 시작일)
+        {
             var result = new List<Occurrence>();
             foreach (int year in TargetYears(today))
             {
@@ -52,6 +64,10 @@ namespace PaymentAlert
                     occ.연도 = year;
                     occ.원기한일 = item.원기한일(year);
                     occ.보정기한일 = cal.NextBusinessDayOrSame(occ.원기한일);
+
+                    // 추적 시작일 이전 건은 이 프로그램의 관심사가 아니다.
+                    if (시작일.HasValue && occ.보정기한일.Date < 시작일.Value.Date) continue;
+
                     occ.알림일 = cal.SubtractBusinessDays(occ.보정기한일, item.알림영업일);
 
                     // 공휴일 자료가 없으면 영업일을 과다 계산해 알림이 늦어질 수 있다.

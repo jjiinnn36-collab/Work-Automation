@@ -48,7 +48,9 @@ namespace PaymentAlert.Tests
             foreach (string w in amountWarn) Console.WriteLine("  경고: " + w);
             Console.WriteLine("금액 자료: " + amounts.Count + "건");
 
-            var occs = Scheduler.BuildOccurrences(master, cal, new DateTime(year, 6, 15), amounts);
+            DateTime? 시작일 = Repository.LoadStartDate("data\\start-date.txt");
+            if (시작일.HasValue) Console.WriteLine("추적 시작일: " + 시작일.Value.ToString("yyyy-MM-dd"));
+            var occs = Scheduler.BuildOccurrences(master, cal, new DateTime(year, 6, 15), amounts, 시작일);
             var list = new List<Occurrence>();
             foreach (Occurrence o in occs) if (o.연도 == year) list.Add(o);
             list.Sort(delegate(Occurrence a, Occurrence b) { return a.알림일.CompareTo(b.알림일); });

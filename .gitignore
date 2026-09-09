@@ -3,6 +3,7 @@ data/payment-master.tsv
 data/amounts.tsv
 data/attachments.tsv
 data/board-position.txt
+data/start-date.txt
 
 # 첨부한 증빙 원본 (신고서·영수증 등)
 증빙/

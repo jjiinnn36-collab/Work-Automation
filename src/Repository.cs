@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Text;
 
 namespace PaymentAlert
 {
@@ -86,6 +87,31 @@ namespace PaymentAlert
                 items.Add(it);
             }
             return items;
+        }
+
+        /// <summary>
+        /// 추적 시작일을 읽는다. 이 날짜보다 기한이 이른 건은 아예 다루지 않는다.
+        /// 프로그램을 쓰기 전의 건들이 '미처리'로 잡히는 것을 막기 위한 것이다.
+        /// 파일이 없거나 형식이 잘못되면 null(제한 없음)을 돌려준다.
+        /// </summary>
+        public static DateTime? LoadStartDate(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return null;
+                foreach (string raw in File.ReadAllLines(path, Encoding.UTF8))
+                {
+                    string line = raw.Trim();
+                    if (line.Length == 0 || line.StartsWith("#")) continue;
+                    DateTime d;
+                    if (DateTime.TryParse(line, CultureInfo.InvariantCulture,
+                            DateTimeStyles.None, out d))
+                        return d.Date;
+                    return null;   // 첫 유효 줄이 날짜가 아니면 설정하지 않은 것으로 본다
+                }
+            }
+            catch { /* 설정을 못 읽는다고 알림이 멈추면 안 된다 */ }
+            return null;
         }
 
         /// <summary>

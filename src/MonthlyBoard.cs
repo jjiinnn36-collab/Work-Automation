@@ -222,7 +222,8 @@ namespace PaymentAlert
 
             status = Repository.LoadStatus(Path.Combine(dataDir, "status.tsv"));
 
-            List<Occurrence> all = Scheduler.BuildOccurrences(master, cal, today, amounts);
+            DateTime? 시작일 = Repository.LoadStartDate(Path.Combine(dataDir, "start-date.txt"));
+            List<Occurrence> all = Scheduler.BuildOccurrences(master, cal, today, amounts, 시작일);
 
             // 원기한(제도상 기한)이 이번 달에 드는 건을 고른다.
             // 5/31이 일요일이라 실제 납부가 6/1이어도 그 건은 5월 일로 본다.

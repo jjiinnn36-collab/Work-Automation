@@ -93,6 +93,7 @@ namespace PaymentAlert
             string apiKeyPath = Path.Combine(DataDir, "apikey.txt");
             string attachIndex = Path.Combine(DataDir, "attachments.tsv");
             string attachRoot = Path.Combine(BaseDir, "증빙");
+            string startPath = Path.Combine(DataDir, "start-date.txt");
 
             if (!File.Exists(masterPath))
             {
@@ -132,7 +133,8 @@ namespace PaymentAlert
 
             // ── 표시 대상 계산 ───────────────────────────────────
             Dictionary<string, AmountRecord> amounts = Repository.LoadAmounts(amountPath, warnings);
-            List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today, amounts);
+            DateTime? 시작일 = Repository.LoadStartDate(startPath);
+            List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today, amounts, 시작일);
             Dictionary<string, StatusRecord> statusMap = Repository.LoadStatus(statusPath);
 
             if (강제표시)
