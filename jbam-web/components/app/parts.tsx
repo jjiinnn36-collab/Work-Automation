@@ -41,17 +41,18 @@ export function StatCard({
     <Card size="sm" className={cn(danger && "ring-destructive/40")}>
       <CardHeader>
         <CardDescription className={cn(danger && "text-destructive", action && "text-action")}>{label}</CardDescription>
-        <CardTitle
+        {/* CardTitle 은 작은 카드에서 글자를 줄이므로 숫자는 따로 그린다. */}
+        <div
           className={cn(
-            "text-3xl font-semibold tabular-nums",
+            "font-heading text-2xl leading-tight font-semibold tabular-nums sm:text-3xl",
             zero && "text-muted-foreground",
             danger && "text-destructive",
             action && "text-action"
           )}
         >
           {typeof value === "number" ? won(value) : value}
-          {unit && <span className="ml-0.5 text-base font-medium">{unit}</span>}
-        </CardTitle>
+          {unit && <span className="ml-0.5 text-sm font-medium">{unit}</span>}
+        </div>
       </CardHeader>
       {hint && <CardContent className="truncate text-xs text-muted-foreground">{hint}</CardContent>}
     </Card>

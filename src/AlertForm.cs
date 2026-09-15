@@ -1,33 +1,75 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Globalization;
+using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace PaymentAlert
 {
     /// <summary>
-    /// 알림 팝업. 표시된 모든 건을 처리하기 전에는 닫히지 않는다(AC-11, AC-25).
+    /// 알림 팝업 — 화면 오른쪽 아래, 작업 표시줄 바로 위에 붙는 340×260 둥근 창 (ADR-0009, 시안 v4).
+    /// 한 번에 한 건을 보여 주고 옆으로 넘긴다. 아래 점이 몇 번째 건인지와 처리 상태를 알려 준다.
+    /// 표시된 모든 건을 진행하거나 '오늘은 대기' 를 골라야 닫힌다 (AC-11, AC-25).
     /// </summary>
     public class AlertForm : Form
     {
+        public const int 폭 = 340;
+        public const int 높이 = 260;
+        public const int 오른쪽여백 = 12;
+        const int 카드폭 = 316;
+        const int 카드높이 = 150;
+        const int 자동넘김ms = 400;
+
         readonly List<AlertRow> rows;
         readonly List<AlertRow> overdue;
         readonly BusinessDayCalendar cal;
         readonly DateTime today;
         readonly AttachmentStore store;
+        readonly string warningText;
 
-        readonly Panel listPanel;
-        readonly PillButton closeButton;
-        readonly Label summaryLabel;
-        readonly Dictionary<AlertRow, RowView> views = new Dictionary<AlertRow, RowView>();
-
+        int index;
         bool allowClose;
 
-        static readonly Color 배경 = Ui.캔버스;
-        static readonly Color 완료색 = Ui.흐린글씨;
-        static readonly Color 긴급색 = Ui.위험;
-        static readonly Color 흐린글씨 = Ui.흐린글씨;
+        readonly Label 제목;
+        readonly Label 건수;
+        readonly Label 날짜;
+        readonly Label 경고;
+        readonly CardPanel 카드;
+        readonly Label 상태;
+        readonly Label 기관;
+        readonly Label 이름;
+        readonly Label 기한;
+        readonly Label 금액;
+        readonly StepDots 단계점;
+        readonly PillButton 진행;
+        readonly PillButton 대기;
+        readonly PillButton 더보기;
+        readonly PillButton 되돌리기;
+        readonly Label 처리표시;
+        readonly PageDots 점;
+        readonly PillButton 이전;
+        readonly PillButton 다음;
+        readonly Panel 바닥;
+        readonly Label summaryLabel;
+        readonly Label 밀린건;
+        readonly PillButton closeButton;
+        readonly ContextMenuStrip 메뉴;
+        readonly Timer 넘김타이머;
+
+        /// <summary>
+        /// 누른 즉시 DB 에 쓰는 통로 (ADR-0004). 인자는 행과 동작(진행/대기/되돌리기),
+        /// 돌려주는 값은 DB 에 기록된 뒤의 상태. 비어 있으면 메모리에서만 바꾼다 (화면 시험용).
+        /// </summary>
+        public Func<AlertRow, string, StatusRecord> 단계변경;
+
+        /// <summary>작업 영역(작업 표시줄을 뺀 화면)에서 팝업이 놓일 자리. 아래는 틈 없이, 오른쪽은 12px 띄운다.</summary>
+        public static Rectangle 자리(Rectangle 작업영역)
+        {
+            return new Rectangle(작업영역.Right - 폭 - 오른쪽여백, 작업영역.Bottom - 높이, 폭, 높이);
+        }
 
         public AlertForm(List<AlertRow> rows, List<AlertRow> overdue,
                          BusinessDayCalendar cal, DateTime today, string warningText,
@@ -38,150 +80,365 @@ namespace PaymentAlert
             this.cal = cal;
             this.today = today;
             this.store = store;
+            this.warningText = warningText;
 
-            Text = "납부 기한 알림 - " + today.ToString("yyyy-MM-dd");
-            StartPosition = FormStartPosition.CenterScreen;
-            FormBorderStyle = FormBorderStyle.FixedDialog;
+            Text = "납부 기한 알림";                 // 작업 표시줄에 보이는 이름
+            FormBorderStyle = FormBorderStyle.None;  // 제목줄 없음 — 끌어 옮길 수 없다 (자리 고정)
+            StartPosition = FormStartPosition.Manual;
+            Bounds = 자리(Screen.PrimaryScreen.WorkingArea);
+            ControlBox = false;
             MaximizeBox = false;
             MinimizeBox = false;
-            ControlBox = false;
             ShowInTaskbar = true;
             TopMost = true;
-            BackColor = 배경;
-            Font = Ui.글꼴(14);
+            KeyPreview = true;
+            BackColor = Ui.캔버스;
+            Font = Ui.글꼴(13);
             ForeColor = Ui.잉크;
+            DoubleBuffered = true;
 
-            const int 좌 = 22;          // 웹 시안 카드의 안쪽 여백
-            const int 폭 = 636;         // 680 - 좌우 22
-            int y = 22;
+            // ── 머리 ──
+            제목 = 라벨("기한 알림", 15, true, Ui.잉크);
+            제목.Location = new Point(16, 13);
+            Controls.Add(제목);
 
-            var title = new Label();
-            title.Text = string.Format("확인이 필요한 건이 {0}건 있습니다.", rows.Count);
-            title.Font = Ui.글꼴(21, true);
-            title.ForeColor = Ui.잉크;
-            title.AutoSize = true;
-            title.Location = new Point(좌, y);
-            Controls.Add(title);
-            y += title.PreferredHeight + 5;
+            건수 = 라벨("", 15, true, Ui.강조);
+            Controls.Add(건수);
 
-            var sub = new Label();
-            sub.Text = "각 건마다 다음 단계 또는 오늘은 대기를 선택해야 닫을 수 있습니다.";
-            sub.Font = Ui.글꼴(12);
-            sub.ForeColor = 흐린글씨;
-            sub.AutoSize = true;
-            sub.Location = new Point(좌, y);
-            Controls.Add(sub);
-            y += sub.PreferredHeight + 14;
+            날짜 = 라벨(today.ToString("M월 d일 (ddd)", new CultureInfo("ko-KR")), 12, false, Ui.아주흐림);
+            Controls.Add(날짜);
 
-            if (!string.IsNullOrEmpty(warningText))
+            경고 = 라벨("⚠ 자료 확인", 12, true, Color.FromArgb(0xb4, 0x53, 0x09));
+            경고.Cursor = Cursors.Hand;
+            경고.Visible = !string.IsNullOrEmpty(warningText);
+            경고.Click += delegate
             {
-                // 시안의 경고 카드 — 노란 띠 대신 펄 바탕에 경고색 글씨.
-                var warn = new Label();
-                warn.Text = warningText;
-                warn.Font = Ui.글꼴(12);
-                warn.ForeColor = Ui.경고글씨;
-                warn.BackColor = Ui.펄;
-                warn.Padding = new Padding(14, 10, 14, 10);
-                warn.MaximumSize = new Size(폭, 0);
-                warn.AutoSize = true;
-                warn.Location = new Point(좌, y);
-                Controls.Add(warn);
-                y += warn.Height + 14;
-            }
+                MessageBox.Show(this, warningText, "납부 기한 알림 - 자료 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            };
+            Controls.Add(경고);
 
-            listPanel = new Panel();
-            listPanel.Location = new Point(좌, y);
-            listPanel.Width = 폭;
-            listPanel.AutoScroll = true;
-            listPanel.BackColor = 배경;
-            Controls.Add(listPanel);
+            // ── 카드 ──
+            카드 = new CardPanel();
+            카드.반경 = 10;
+            카드.띠폭 = 3;
+            카드.Location = new Point(12, 44);
+            카드.Size = new Size(카드폭, 카드높이);
+            Controls.Add(카드);
 
-            int ry = 0;
-            foreach (AlertRow r in rows)
+            상태 = 라벨("", 11, true, Ui.강조);
+            상태.Location = new Point(13, 10);
+            카드.Controls.Add(상태);
+
+            기관 = 라벨("", 11, false, Ui.흐린글씨);
+            카드.Controls.Add(기관);
+
+            이름 = 라벨("", 16, true, Ui.잉크);
+            이름.AutoSize = false;
+            이름.AutoEllipsis = true;
+            이름.Location = new Point(12, 27);
+            이름.Size = new Size(150, 24);
+            카드.Controls.Add(이름);
+
+            기한 = 라벨("", 11, false, Ui.흐린글씨);
+            카드.Controls.Add(기한);
+
+            금액 = 라벨("", 13, true, Ui.잉크);
+            카드.Controls.Add(금액);
+
+            단계점 = new StepDots();
+            단계점.점 = 9;
+            단계점.라벨px = 10;
+            단계점.높이맞추기();
+            단계점.Location = new Point(13, 56);
+            단계점.Width = 카드폭 - 26;
+            카드.Controls.Add(단계점);
+
+            진행 = 알약("", true, 12);
+            진행.Location = new Point(12, 106);
+            진행.Click += delegate { 적용후넘김(현재행(), "진행"); };
+            카드.Controls.Add(진행);
+
+            대기 = 알약("오늘은 대기", false, 12);
+            대기.Click += delegate { 적용후넘김(현재행(), "대기"); };
+            카드.Controls.Add(대기);
+
+            처리표시 = 라벨("", 11, true, Ui.흐린글씨);
+            처리표시.BackColor = Ui.양피지;
+            처리표시.Padding = new Padding(8, 4, 8, 4);
+            처리표시.Location = new Point(12, 110);
+            카드.Controls.Add(처리표시);
+
+            되돌리기 = 알약("되돌리기", false, 12);
+            되돌리기.Click += delegate { 되돌리기누름(); };
+            카드.Controls.Add(되돌리기);
+
+            메뉴 = new ContextMenuStrip();
+            메뉴.Font = Ui.글꼴(12);
+            더보기 = 알약("⋯", false, 13);
+            더보기.Size = new Size(40, 28);
+            더보기.Click += delegate { 메뉴채우기(); 메뉴.Show(더보기, new Point(0, 더보기.Height)); };
+            카드.Controls.Add(더보기);
+
+            // 카드를 옆으로 끌어 넘긴다. 버튼 위에서는 끌지 않는다.
+            끌기연결(카드);
+            foreach (Control c in 카드.Controls) if (!(c is Button)) 끌기연결(c);
+
+            // ── 넘기기 줄 ──
+            이전 = 알약("‹", false, 14);
+            이전.Size = new Size(26, 22);
+            이전.Click += delegate { 이동(index - 1); };
+            Controls.Add(이전);
+
+            점 = new PageDots();
+            점.처리됨 = delegate(int i) { return rows[i].오늘처리됨(today); };
+            점.지남 = delegate(int i) { return rows[i].Occ.남은영업일(cal, today) < 0; };
+            점.눌림 += delegate(int i) { 이동(i); };
+            Controls.Add(점);
+
+            다음 = 알약("›", false, 14);
+            다음.Size = new Size(26, 22);
+            다음.Click += delegate { 이동(index + 1); };
+            Controls.Add(다음);
+
+            // ── 바닥 ──
+            바닥 = new Panel();
+            바닥.BackColor = Ui.양피지;
+            바닥.Location = new Point(0, 높이 - 38);
+            바닥.Size = new Size(폭, 38);
+            바닥.Paint += delegate(object s, PaintEventArgs e)
             {
-                var view = new RowView(this, r, cal, today, store);
-                view.Panel.Location = new Point(0, ry);
-                listPanel.Controls.Add(view.Panel);
-                views[r] = view;
-                ry += view.Panel.Height + 10;
-            }
-            if (ry > 0) ry -= 10;       // 마지막 카드 아래 간격은 뺀다
+                using (var pen = new Pen(Ui.연한선)) e.Graphics.DrawLine(pen, 0, 0, 폭, 0);
+            };
+            Controls.Add(바닥);
 
-            // 목록 높이를 고정하면 행이 커질 때 마지막 행이 잘린다.
-            // 화면에서 쓸 수 있는 높이를 계산해 거기에 맞춘다.
-            int 아래여백 = 170;   // 기한초과 요약 + 바닥 띠 + 창 테두리
-            int 최대목록 = Screen.PrimaryScreen.WorkingArea.Height - y - 아래여백;
-            if (최대목록 < 200) 최대목록 = 200;
-            listPanel.Height = Math.Max(Math.Min(ry, 최대목록), 60);
-            y += listPanel.Height + 16;
+            summaryLabel = 라벨("", 12, false, Ui.흐린글씨);
+            summaryLabel.BackColor = Ui.양피지;
+            summaryLabel.Location = new Point(16, 11);
+            바닥.Controls.Add(summaryLabel);
 
-            if (this.overdue.Count > 0)
+            밀린건 = 라벨("", 12, true, Ui.위험);
+            밀린건.BackColor = Ui.양피지;
+            밀린건.Cursor = Cursors.Hand;
+            밀린건.Visible = this.overdue.Count > 0;
+            밀린건.Click += delegate
             {
-                var od = new Label();
-                od.Text = BuildOverdueText(this.overdue);
-                od.Font = Ui.글꼴(12);
-                od.ForeColor = Ui.경고글씨;
-                od.MaximumSize = new Size(폭, 0);
-                od.AutoSize = true;
-                od.Location = new Point(좌, y);
-                Controls.Add(od);
-                y += od.Height + 14;
-            }
+                MessageBox.Show(this, BuildOverdueText(this.overdue), "기한이 지난 미처리 건", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            };
+            바닥.Controls.Add(밀린건);
 
-            // ── 바닥 띠 ── 시안처럼 양피지 바탕에 요약과 닫기를 둔다.
-            var footer = new Panel();
-            footer.BackColor = Ui.양피지;
-            footer.Location = new Point(0, y);
-            footer.Size = new Size(680, 64);
-            Controls.Add(footer);
-
-            var 구분선 = new Panel();
-            구분선.BackColor = Ui.연한선;
-            구분선.Location = new Point(0, 0);
-            구분선.Size = new Size(680, 1);
-            footer.Controls.Add(구분선);
-
-            summaryLabel = new Label();
-            summaryLabel.Font = Ui.글꼴(12);
-            summaryLabel.AutoSize = true;
-            summaryLabel.Location = new Point(좌, 24);
-            footer.Controls.Add(summaryLabel);
-
-            closeButton = new PillButton();
-            closeButton.Text = "닫기";
-            closeButton.Size = new Size(108, 38);
-            closeButton.Location = new Point(680 - 좌 - 108, 13);
+            closeButton = 알약("닫기", true, 12);
+            closeButton.Size = new Size(60, 26);
+            closeButton.Location = new Point(폭 - 16 - 60, 6);
             closeButton.Click += delegate { TryClose(); };
-            Ui.알약(closeButton, true);
-            footer.Controls.Add(closeButton);
+            바닥.Controls.Add(closeButton);
 
-            ClientSize = new Size(680, y + 64);
+            넘김타이머 = new Timer();
+            넘김타이머.Interval = 자동넘김ms;
+            넘김타이머.Tick += delegate
+            {
+                넘김타이머.Stop();
+                int n = 다음남은건(index);
+                if (n >= 0) 이동(n);
+            };
+
+            // 첫 장은 아직 안 고른 건 중 기한이 가장 이른 건. rows 는 이미 기한 순이다.
+            int first = 다음남은건(-1);
+            index = first >= 0 ? first : 0;
             RefreshState();
         }
 
-        static string BuildOverdueText(List<AlertRow> overdue)
+        // ══ 창 모양 ══════════════════════════════════════════════
+
+        protected override CreateParams CreateParams
         {
-            var names = new List<string>();
-            int shown = 0;
-            foreach (AlertRow r in overdue)
+            get
             {
-                if (shown >= 3) break;
-                names.Add(r.Occ.Item.비용명 + "(" + r.Occ.보정기한일.ToString("yy-MM-dd") + ")");
-                shown++;
+                CreateParams cp = base.CreateParams;
+                cp.ClassStyle |= 0x00020000;   // CS_DROPSHADOW — 제목줄 없는 창에도 그림자
+                return cp;
             }
-            string tail = overdue.Count > shown
-                ? string.Format(" 외 {0}건", overdue.Count - shown) : "";
-            return string.Format(
-                "기한이 지난 미처리 건이 {0}건 있습니다: {1}{2}\r\n" +
-                "이 건들은 여기서 처리를 강제하지 않습니다. data\\run.log 에 전체 목록이 있습니다.",
-                overdue.Count, string.Join(", ", names.ToArray()), tail);
         }
 
-        /// <summary>
-        /// 누른 즉시 DB 에 쓰는 통로 (ADR-0004). 인자는 행과 동작(진행/대기/되돌리기),
-        /// 돌려주는 값은 DB 에 기록된 뒤의 상태. 비어 있으면 메모리에서만 바꾼다 (화면 시험용).
-        /// </summary>
-        public Func<AlertRow, string, StatusRecord> 단계변경;
+        [DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        [DllImport("gdi32.dll")]
+        static extern IntPtr CreateRoundRectRgn(int l, int t, int r, int b, int w, int h);
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            // Windows 11: 시스템 둥근 모서리(테두리·그림자 포함). 안 되면 창 모양을 직접 깎는다 (Windows 10).
+            bool 둥근모서리 = false;
+            try
+            {
+                int round = 2;   // DWMWCP_ROUND
+                둥근모서리 = DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int)) == 0 && Environment.OSVersion.Version.Build >= 22000;
+            }
+            catch { }
+            if (!둥근모서리)
+                Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, 폭 + 1, 높이 + 1, 24, 24));
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            using (var pen = new Pen(Ui.테두리)) e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+        }
+
+        // ══ 공개 동작 (시험에서도 쓴다) ═════════════════════════
+
+        public int 현재번호 { get { return index; } }
+        public int 건수값 { get { return rows.Count; } }
+
+        /// <summary>i 번째 건으로 넘긴다. 범위 밖이면 가장자리에 멈춘다.</summary>
+        public void 이동(int i)
+        {
+            if (rows.Count == 0) return;
+            index = Math.Max(0, Math.Min(rows.Count - 1, i));
+            RefreshState();
+        }
+
+        /// <summary>from 다음부터 한 바퀴 돌며 아직 안 고른 건을 찾는다. 없으면 -1.</summary>
+        public int 다음남은건(int from)
+        {
+            for (int k = 1; k <= rows.Count; k++)
+            {
+                int j = ((from + k) % rows.Count + rows.Count) % rows.Count;
+                if (!rows[j].오늘처리됨(today)) return j;
+            }
+            return -1;
+        }
+
+        // 창을 띄우기 전에는 자식 컨트롤의 Visible 이 늘 false 라, 보일지 여부를 따로 들고 있는다 (시험용).
+        bool 진행보임;
+        bool 점보임값;
+
+        public string 진행버튼문구 { get { return 진행보임 ? 진행.Text : null; } }
+        public bool 점보임 { get { return 점보임값; } }
+
+        /// <summary>단계 진행/대기/되돌리기 후 화면 전체를 다시 그린다.</summary>
+        public void RefreshState()
+        {
+            int 남음 = 0;
+            foreach (AlertRow r in rows) if (!r.오늘처리됨(today)) 남음++;
+
+            건수.Text = rows.Count + "건";
+            건수.Location = new Point(제목.Right, 13);
+            날짜.Location = new Point(폭 - 16 - 날짜.PreferredWidth, 17);
+            경고.Location = new Point(날짜.Left - 8 - 경고.PreferredWidth, 17);
+
+            카드그리기();
+
+            점.설정(rows.Count, index);
+            점.Location = new Point((폭 - 점.Width) / 2, 카드.Bottom + 6);
+            이전.Location = new Point(점.Left - 30, 카드.Bottom + 4);
+            다음.Location = new Point(점.Right + 4, 카드.Bottom + 4);
+            Ui.버튼활성(이전, index > 0);
+            Ui.버튼활성(다음, index < rows.Count - 1);
+            bool 여러건 = rows.Count > 1;
+            점보임값 = 여러건;
+            점.Visible = 여러건; 이전.Visible = 여러건; 다음.Visible = 여러건;
+
+            summaryLabel.Text = 남음 == 0 ? "모든 건을 확인했습니다" : string.Format("남은 {0}건 · 모두 고르면 닫힘", 남음);
+            밀린건.Text = this.overdue.Count > 0 ? string.Format("밀린 {0}건", this.overdue.Count) : "";
+            밀린건.Location = new Point(summaryLabel.Right + 6, 11);
+            Ui.버튼활성(closeButton, 남음 == 0);
+        }
+
+        void 카드그리기()
+        {
+            if (rows.Count == 0) return;
+            AlertRow row = 현재행();
+            PaymentItem it = row.Occ.Item;
+            int 남은 = row.Occ.남은영업일(cal, today);
+            bool done = row.최종단계도달;
+            bool handled = row.오늘처리됨(today);
+            bool 지남 = 남은 < 0;
+
+            string st;
+            if (done) st = "처리 완료";
+            else if (남은 > 0) st = "D-" + 남은 + "영업일";
+            else if (남은 == 0) st = "오늘이 기한";
+            else st = "기한 " + (-남은) + "영업일 지남";
+            상태.Text = st;
+            상태.ForeColor = handled ? Ui.흐린글씨 : (지남 ? Ui.위험 : Ui.강조);
+
+            기관.Text = it.기관;
+            기관.Location = new Point(카드폭 - 12 - 기관.PreferredWidth, 10);
+
+            금액.Text = 금액표시(row.Occ);
+            금액.ForeColor = AmountRules.금액(row.Occ).HasValue ? Ui.잉크 : Ui.강조;
+            금액.Location = new Point(카드폭 - 12 - 금액.PreferredWidth, 31);
+
+            이름.Text = it.비용명;
+            기한.Text = row.Occ.보정기한일.ToString("MM-dd (ddd)", new CultureInfo("ko-KR"));
+            int 이름폭 = Math.Min(TextRenderer.MeasureText(it.비용명, 이름.Font).Width + 2, 금액.Left - 12 - 12 - 기한.PreferredWidth - 6);
+            이름.Width = Math.Max(60, 이름폭);
+            기한.Location = new Point(이름.Right + 4, 35);
+
+            // 끝난 단계는 회색, 지금 할 단계는 파랑. 끝난 건은 전부 회색 (ADR-0005).
+            단계점.설정(Stages.For(it.진행흐름), row.Status.단계 + 1, done);
+
+            카드.띠색 = handled ? Ui.테두리 : (지남 ? Ui.위험 : Ui.강조);
+            카드.테두리색 = handled ? Ui.연한선 : Ui.테두리;
+
+            // ── 버튼: 아직 안 골랐으면 [행동] [오늘은 대기] [⋯], 골랐으면 [처리 표시] [되돌리기] [⋯] ──
+            진행보임 = !handled && !done;
+            진행.Visible = 진행보임;
+            대기.Visible = 진행보임;
+            처리표시.Visible = handled || done;
+            되돌리기.Visible = (handled || done) && row.Status.단계 > 0;
+
+            if (진행보임)
+            {
+                진행.Text = row.다음행동 ?? "";
+                진행.Width = Math.Max(76, TextRenderer.MeasureText(진행.Text, 진행.Font).Width + 26);
+                진행.Height = 28;
+                대기.Size = new Size(TextRenderer.MeasureText(대기.Text, 대기.Font).Width + 24, 28);
+                대기.Location = new Point(진행.Right + 5, 106);
+            }
+            if (처리표시.Visible)
+            {
+                bool 대기함 = !row.오늘단계변경 && !done;
+                처리표시.Text = done ? "모두 끝남" : (대기함 ? "내일 다시 알림" : "처리함");
+                처리표시.Location = new Point(12, 110);
+            }
+            더보기.Location = new Point(카드폭 - 12 - 더보기.Width, 106);
+            if (되돌리기.Visible)
+            {
+                되돌리기.Size = new Size(TextRenderer.MeasureText(되돌리기.Text, 되돌리기.Font).Width + 24, 28);
+                되돌리기.Location = new Point(더보기.Left - 5 - 되돌리기.Width, 106);
+            }
+        }
+
+        AlertRow 현재행() { return rows[Math.Max(0, Math.Min(index, rows.Count - 1))]; }
+
+        // ══ 동작 ═════════════════════════════════════════════════
+
+        void 적용후넘김(AlertRow row, string 동작)
+        {
+            if (동작 == "진행" && row.최종단계도달) return;
+            if (!적용(row, 동작)) return;
+            if (동작 == "진행") row.오늘단계변경 = true;
+            RefreshState();
+            // 고른 건은 잠깐 보여 준 뒤 다음 남은 건으로 넘긴다 (시안 v4, 사용자 확정 2026-09-15).
+            if (다음남은건(index) >= 0) { 넘김타이머.Stop(); 넘김타이머.Start(); }
+        }
+
+        void 되돌리기누름()
+        {
+            AlertRow row = 현재행();
+            if (row.Status.단계 <= 0) return;
+            string[] names = Stages.For(row.Flow);
+            string 확인 = string.Format("{0} ({1})\r\n\r\n'{2}' 를 취소하고 '{3}' 까지 끝난 것으로 되돌릴까요?",
+                row.Occ.Item.비용명, row.Occ.Item.기관, names[row.Status.단계], names[row.Status.단계 - 1]);
+            if (MessageBox.Show(this, 확인, "되돌리기", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+                return;
+            if (!적용(row, "되돌리기")) return;
+            row.오늘단계변경 = false;
+            RefreshState();
+        }
 
         /// <summary>동작을 적용한다. 다른 창이 먼저 바꿨으면 알리고 최신 단계로 맞춘 뒤 false.</summary>
         bool 적용(AlertRow row, string 동작)
@@ -217,28 +474,124 @@ namespace PaymentAlert
             }
         }
 
-        /// <summary>단계 진행/대기/되돌리기 후 화면 전체를 다시 그린다.</summary>
-        public void RefreshState()
+        void 메뉴채우기()
         {
-            int 남음 = 0;
-            foreach (AlertRow r in rows)
+            메뉴.Items.Clear();
+            AlertRow row = 현재행();
+            int n = store.CountFor(row.Occ.연도, row.Occ.Item.Id);
+            메뉴.Items.Add("증빙 첨부…", null, delegate { AttachFile(row); });
+            var 열기 = new ToolStripMenuItem(n > 0 ? string.Format("증빙 폴더 열기 ({0}건)", n) : "증빙 폴더 열기");
+            열기.Click += delegate { OpenFolder(row); };
+            메뉴.Items.Add(열기);
+            var 되돌 = new ToolStripMenuItem("한 단계 되돌리기");
+            되돌.Enabled = row.Status.단계 > 0;
+            되돌.Click += delegate { 되돌리기누름(); };
+            메뉴.Items.Add(되돌);
+            if (!string.IsNullOrEmpty(row.Occ.Item.홈페이지주소))
             {
-                views[r].Refresh();
-                if (!r.오늘처리됨(today)) 남음++;
+                메뉴.Items.Add(new ToolStripSeparator());
+                메뉴.Items.Add((string.IsNullOrEmpty(row.Occ.Item.홈페이지명) ? "홈페이지" : row.Occ.Item.홈페이지명) + " 열기", null,
+                    delegate { 열기시도(row.Occ.Item.홈페이지주소); });
             }
+            string port = Path.Combine(Path.GetTempPath(), "PaymentAlert.web-port");
+            if (File.Exists(port))
+            {
+                메뉴.Items.Add(new ToolStripSeparator());
+                메뉴.Items.Add("웹 화면에서 보기", null, delegate
+                {
+                    try { 열기시도("http://localhost:" + File.ReadAllText(port).Trim() + "/#alerts"); } catch { }
+                });
+            }
+        }
 
-            Ui.버튼활성(closeButton, 남음 == 0);
-            summaryLabel.Text = 남음 == 0
-                ? "모든 건을 확인했습니다. 닫아도 됩니다."
-                : string.Format("아직 확인하지 않은 건이 {0}건 남았습니다.", 남음);
-            summaryLabel.ForeColor = 남음 == 0 ? 완료색 : 긴급색;
+        void 열기시도(string target)
+        {
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo(target);
+                psi.UseShellExecute = true;
+                using (System.Diagnostics.Process.Start(psi)) { }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "열지 못했습니다.\r\n" + ex.Message, "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        /// <summary>증빙 파일을 골라 보관소에 복사한다. 지금 지점으로 기록된다.</summary>
+        void AttachFile(AlertRow row)
+        {
+            using (var dlg = new OpenFileDialog())
+            {
+                dlg.Title = row.Occ.Item.표시명 + " — 증빙 첨부 (" + row.현재단계명 + ")";
+                dlg.Filter = "증빙 파일 (*.pdf;*.jpg;*.png;*.xlsx;*.hwp;*.docx)" +
+                             "|*.pdf;*.jpg;*.jpeg;*.png;*.xlsx;*.xls;*.hwp;*.hwpx;*.docx|모든 파일 (*.*)|*.*";
+                dlg.Multiselect = true;
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+
+                var failed = new List<string>();
+                foreach (string f in dlg.FileNames)
+                {
+                    try { store.Attach(row.Occ.연도, row.Occ.Item.Id, row.현재단계명, f, Attachment.증빙, "팝업"); }
+                    catch (Exception ex) { failed.Add(Path.GetFileName(f) + " — " + ex.Message); }
+                }
+                if (failed.Count > 0)
+                    MessageBox.Show(this, string.Format("{0}건은 첨부하지 못했습니다.\r\n\r\n{1}", failed.Count, string.Join("\r\n", failed.ToArray())),
+                        "증빙 첨부", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                RefreshState();
+            }
+        }
+
+        void OpenFolder(AlertRow row)
+        {
+            string folder = store.FolderFor(row.Occ.연도, row.Occ.Item.Id);
+            try
+            {
+                if (!Directory.Exists(folder)) Directory.CreateDirectory(folder);
+                System.Diagnostics.Process.Start("explorer.exe", "\"" + folder + "\"");
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "폴더를 열지 못했습니다.\r\n" + folder + "\r\n\r\n" + ex.Message,
+                    "증빙", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        // ══ 끌어 넘기기·키보드·닫기 ══════════════════════════════
+
+        int 끌기시작 = int.MinValue;
+
+        void 끌기연결(Control c)
+        {
+            c.MouseDown += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) 끌기시작 = Cursor.Position.X; };
+            c.MouseUp += delegate(object s, MouseEventArgs e)
+            {
+                if (끌기시작 == int.MinValue) return;
+                int dx = Cursor.Position.X - 끌기시작;
+                끌기시작 = int.MinValue;
+                if (dx <= -40) 이동(index + 1);
+                else if (dx >= 40) 이동(index - 1);
+            };
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (keyData == Keys.Right) { 이동(index + 1); return true; }
+            if (keyData == Keys.Left) { 이동(index - 1); return true; }
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override bool ProcessDialogKey(Keys keyData)
+        {
+            if (keyData == (Keys.Alt | Keys.F4)) return true;
+            if (keyData == Keys.Escape) return true;
+            return base.ProcessDialogKey(keyData);
         }
 
         void TryClose()
         {
             foreach (AlertRow r in rows)
                 if (!r.오늘처리됨(today)) return;
-
             allowClose = true;
             DialogResult = DialogResult.OK;
             Close();
@@ -255,310 +608,154 @@ namespace PaymentAlert
             base.OnFormClosing(e);
         }
 
-        protected override bool ProcessDialogKey(Keys keyData)
+        protected override void Dispose(bool disposing)
         {
-            if (keyData == (Keys.Alt | Keys.F4)) return true;
-            if (keyData == Keys.Escape) return true;
-            return base.ProcessDialogKey(keyData);
+            if (disposing)
+            {
+                넘김타이머.Dispose();
+                메뉴.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
-        // 한 건을 그리는 내부 뷰
-        class RowView
+        // ══ 도우미 ═══════════════════════════════════════════════
+
+        static Label 라벨(string text, float px, bool bold, Color color)
         {
-            readonly AlertForm owner;
-            readonly AlertRow row;
-            readonly BusinessDayCalendar cal;
-            readonly DateTime today;
-            readonly AttachmentStore store;
+            var l = new Label();
+            l.Text = text;
+            l.AutoSize = true;
+            l.Font = Ui.글꼴(px, bold);
+            l.ForeColor = color;
+            l.BackColor = Color.Transparent;
+            l.UseMnemonic = false;
+            return l;
+        }
 
-            public readonly CardPanel Panel;
-            readonly Label 심각도;
-            readonly Label 기관;
-            readonly Label 기한;
-            readonly Label 제목;
-            readonly Label 금액;
-            readonly StepDots 단계점;
-            readonly PillButton 진행;
-            readonly PillButton 대기;
-            readonly PillButton 되돌리기;
-            readonly Label 증빙;
-            readonly PillButton 첨부;
-            readonly PillButton 열기;
+        static PillButton 알약(string text, bool 주요, float px)
+        {
+            var b = new PillButton();
+            b.Text = text;
+            Ui.알약(b, 주요);
+            b.Font = Ui.글꼴(px, true);
+            b.Size = new Size(80, 28);
+            return b;
+        }
 
-            public RowView(AlertForm owner, AlertRow row, BusinessDayCalendar cal, DateTime today,
-                           AttachmentStore store)
+        static string 금액표시(Occurrence occ)
+        {
+            decimal? a = AmountRules.금액(occ);
+            if (a.HasValue) return string.Format("{0:N0}원", a.Value);
+            return AmountRules.미확인(occ) ? "금액 미확인" : "";
+        }
+
+        public static string BuildOverdueText(List<AlertRow> overdue)
+        {
+            var names = new List<string>();
+            int shown = 0;
+            foreach (AlertRow r in overdue)
             {
-                this.owner = owner;
-                this.row = row;
-                this.cal = cal;
-                this.today = today;
-                this.store = store;
-
-                // 시안의 알림 카드 — 1px 테두리, 11px 모서리, 왼쪽 심각도 띠.
-                Panel = new CardPanel();
-                Panel.Width = 616;
-                Panel.Height = 224;
-                Panel.Padding = new Padding(20, 16, 20, 16);
-
-                const int 좌 = 20;
-                const int 폭 = 576;     // 616 - 좌우 20
-
-                심각도 = new Label();
-                심각도.AutoSize = true;
-                심각도.Font = Ui.글꼴(12, true);
-                심각도.Location = new Point(좌, 16);
-                Panel.Controls.Add(심각도);
-
-                기관 = new Label();
-                기관.AutoSize = true;
-                기관.Font = Ui.글꼴(12);
-                기관.ForeColor = 흐린글씨;
-                기관.TextAlign = ContentAlignment.TopRight;
-                기관.Location = new Point(좌, 16);
-                Panel.Controls.Add(기관);
-
-                기한 = new Label();
-                기한.AutoSize = true;
-                기한.Font = Ui.글꼴(12);
-                기한.ForeColor = 흐린글씨;
-                기한.Location = new Point(좌, 40);
-                Panel.Controls.Add(기한);
-
-                제목 = new Label();
-                제목.AutoSize = true;
-                제목.Font = Ui.글꼴(21, true);
-                제목.ForeColor = Ui.잉크;
-                제목.Location = new Point(좌 - 2, 58);
-                Panel.Controls.Add(제목);
-
-                금액 = new Label();
-                금액.AutoSize = true;
-                금액.Font = Ui.글꼴(17, true);
-                금액.ForeColor = Ui.잉크;
-                금액.Location = new Point(좌, 92);
-                Panel.Controls.Add(금액);
-
-                단계점 = new StepDots();
-                단계점.Location = new Point(좌, 116);
-                단계점.Width = 폭;
-                Panel.Controls.Add(단계점);
-
-                // ── 조치 버튼 ── 다음 단계만 파란 알약, 나머지는 흰 알약.
-                진행 = new PillButton();
-                진행.Size = new Size(104, 36);
-                진행.Location = new Point(좌, 172);
-                진행.Click += delegate { Advance(); };
-                Ui.알약(진행, true);
-                Panel.Controls.Add(진행);
-
-                대기 = new PillButton();
-                대기.Text = "오늘은 대기";
-                대기.Size = new Size(116, 36);
-                대기.Location = new Point(좌 + 110, 172);
-                대기.Click += delegate { Defer(); };
-                Ui.알약(대기, false);
-                Panel.Controls.Add(대기);
-
-                되돌리기 = new PillButton();
-                되돌리기.Text = "되돌리기";
-                되돌리기.Size = new Size(96, 36);
-                되돌리기.Location = new Point(좌 + 232, 172);
-                되돌리기.Click += delegate { Revert(); };
-                Ui.알약(되돌리기, false);
-                되돌리기.ForeColor = 흐린글씨;
-                Panel.Controls.Add(되돌리기);
-
-                증빙 = new Label();
-                증빙.AutoSize = true;
-                증빙.Font = Ui.글꼴(12);
-                증빙.ForeColor = Ui.아주흐림;
-                증빙.Location = new Point(좌 + 336, 183);
-                Panel.Controls.Add(증빙);
-
-                첨부 = new PillButton();
-                첨부.Text = "증빙 첨부";
-                첨부.Size = new Size(92, 36);
-                첨부.Location = new Point(좌 + 388, 172);
-                첨부.Click += delegate { AttachFile(); };
-                Ui.알약(첨부, false);
-                Panel.Controls.Add(첨부);
-
-                열기 = new PillButton();
-                열기.Text = "증빙 열기";
-                열기.Size = new Size(92, 36);
-                열기.Location = new Point(좌 + 486, 172);
-                열기.Click += delegate { OpenFolder(); };
-                Ui.알약(열기, false);
-                Panel.Controls.Add(열기);
+                if (shown >= 5) break;
+                names.Add("· " + r.Occ.Item.비용명 + " (" + r.Occ.보정기한일.ToString("yy-MM-dd") + ", " + r.현재단계명 + ")");
+                shown++;
             }
+            string tail = overdue.Count > shown ? string.Format("\r\n외 {0}건", overdue.Count - shown) : "";
+            return string.Format(
+                "기한이 지나고 5영업일이 넘은 미처리 건이 {0}건 있습니다.\r\n\r\n{1}{2}\r\n\r\n" +
+                "매일 묻지는 않지만 끝내야 조용해집니다. 웹 화면 '받은 알림' 에서 처리할 수 있습니다.",
+                overdue.Count, string.Join("\r\n", names.ToArray()), tail);
+        }
+    }
 
-            /// <summary>증빙 파일을 골라 보관소에 복사한다. 현재 단계로 기록된다.</summary>
-            void AttachFile()
+    /// <summary>
+    /// 넘기기 점 (시안 v4). 지금 보는 건 = 길쭉한 파랑(기한 지남이면 빨강), 아직 안 고른 건 = 빈 점,
+    /// 기한 지난 건 = 꽉 찬 빨강, 고른 건 = 꽉 찬 회색. 12건을 넘으면 '3 / 15' 로 적는다.
+    /// </summary>
+    class PageDots : Control
+    {
+        const int 지름 = 8, 긴폭 = 20, 간격 = 6;
+        int count, current;
+        public Func<int, bool> 처리됨 = delegate { return false; };
+        public Func<int, bool> 지남 = delegate { return false; };
+        public event Action<int> 눌림;
+
+        public PageDots()
+        {
+            Height = 12;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint
+                     | ControlStyles.SupportsTransparentBackColor | ControlStyles.ResizeRedraw, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+        }
+
+        public bool 글자로 { get { return count > 12; } }
+
+        public void 설정(int count, int current)
+        {
+            this.count = count;
+            this.current = current;
+            Width = 글자로 ? 60 : Math.Max(긴폭, count * 지름 + Math.Max(0, count - 1) * 간격 + (긴폭 - 지름));
+            Invalidate();
+        }
+
+        /// <summary>i 번째 점의 상태 이름. 시험에서 쓴다.</summary>
+        public string 상태(int i)
+        {
+            if (i == current) return 지남(i) && !처리됨(i) ? "현재-지남" : "현재";
+            if (처리됨(i)) return "처리됨";
+            return 지남(i) ? "지남" : "남음";
+        }
+
+        int X(int i) { return i * (지름 + 간격) + (i > current ? 긴폭 - 지름 : 0); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (count == 0) return;
+            if (글자로)
             {
-                using (var dlg = new OpenFileDialog())
+                TextRenderer.DrawText(g, string.Format("{0} / {1}", current + 1, count), Ui.글꼴(11, true), ClientRectangle, Ui.흐린글씨,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                return;
+            }
+            int y = (Height - 지름) / 2;
+            for (int i = 0; i < count; i++)
+            {
+                string s = 상태(i);
+                int w = i == current ? 긴폭 : 지름;
+                var r = new RectangleF(X(i) + 0.5f, y + 0.5f, w - 1, 지름 - 1);
+                using (var path = 알약(r))
                 {
-                    dlg.Title = row.Occ.Item.표시명 + " — 증빙 첨부 (" + row.현재단계명 + ")";
-                    dlg.Filter = "증빙 파일 (*.pdf;*.jpg;*.png;*.xlsx;*.hwp;*.docx)" +
-                                 "|*.pdf;*.jpg;*.jpeg;*.png;*.xlsx;*.xls;*.hwp;*.hwpx;*.docx|모든 파일 (*.*)|*.*";
-                    dlg.Multiselect = true;
-                    if (dlg.ShowDialog(owner) != DialogResult.OK) return;
-
-                    int ok = 0;
-                    var failed = new List<string>();
-                    foreach (string f in dlg.FileNames)
-                    {
-                        try
-                        {
-                            store.Attach(row.Occ.연도, row.Occ.Item.Id, row.현재단계명, f);
-                            ok++;
-                        }
-                        catch (Exception ex)
-                        {
-                            failed.Add(System.IO.Path.GetFileName(f) + " — " + ex.Message);
-                        }
-                    }
-
-                    if (failed.Count > 0)
-                    {
-                        MessageBox.Show(owner,
-                            string.Format("{0}건은 첨부하지 못했습니다.\r\n\r\n{1}",
-                                failed.Count, string.Join("\r\n", failed.ToArray())),
-                            "증빙 첨부", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    }
-                    if (ok > 0) owner.RefreshState();
+                    Color fill, line;
+                    if (s == "현재") { fill = Ui.강조; line = Ui.강조; }
+                    else if (s == "현재-지남" || s == "지남") { fill = Ui.위험; line = Ui.위험; }
+                    else if (s == "처리됨") { fill = Ui.아주흐림; line = Ui.아주흐림; }
+                    else { fill = Ui.캔버스; line = Color.FromArgb(0xc7, 0xc7, 0xcc); }
+                    using (var br = new SolidBrush(fill)) g.FillPath(br, path);
+                    using (var pen = new Pen(line, 1.5f)) g.DrawPath(pen, path);
                 }
             }
+        }
 
-            /// <summary>증빙 폴더를 탐색기로 연다.</summary>
-            void OpenFolder()
+        static GraphicsPath 알약(RectangleF r)
+        {
+            var p = new GraphicsPath();
+            float d = r.Height;
+            p.AddArc(r.X, r.Y, d, d, 90, 180);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 180);
+            p.CloseFigure();
+            return p;
+        }
+
+        protected override void OnMouseClick(MouseEventArgs e)
+        {
+            base.OnMouseClick(e);
+            if (글자로 || 눌림 == null) return;
+            for (int i = 0; i < count; i++)
             {
-                string folder = store.FolderFor(row.Occ.연도, row.Occ.Item.Id);
-                try
-                {
-                    if (!System.IO.Directory.Exists(folder))
-                        System.IO.Directory.CreateDirectory(folder);
-                    System.Diagnostics.Process.Start("explorer.exe", "\"" + folder + "\"");
-                }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(owner, "폴더를 열지 못했습니다.\r\n" + folder + "\r\n\r\n" + ex.Message,
-                        "증빙", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                }
-            }
-
-            void Advance()
-            {
-                if (row.최종단계도달) return;
-                if (!owner.적용(row, "진행")) return;
-                row.오늘단계변경 = true;
-                owner.RefreshState();
-            }
-
-            void Defer()
-            {
-                if (!owner.적용(row, "대기")) return;
-                owner.RefreshState();
-            }
-
-            void Revert()
-            {
-                if (row.Status.단계 <= 0) return;
-                if (!owner.적용(row, "되돌리기")) return;
-                owner.RefreshState();
-            }
-
-            public void Refresh()
-            {
-                PaymentItem it = row.Occ.Item;
-                제목.Text = it.비용명;   // 표시명은 "비용명 (기관)" 이라 기관 라벨과 중복된다
-                금액.Text = 금액표시(row.Occ);
-
-                기관.Text = it.기관;
-                기관.Location = new Point(Panel.Width - 20 - 기관.PreferredWidth, 16);
-
-                int 남은 = row.Occ.남은영업일(cal, today);
-                string dtext;
-                Color dcolor;
-                if (남은 > 0)
-                {
-                    dtext = string.Format("D-{0}영업일", 남은);
-                    dcolor = 남은 <= 1 ? 긴급색 : 흐린글씨;
-                }
-                else if (남은 == 0)
-                {
-                    dtext = "오늘이 기한입니다";
-                    dcolor = 긴급색;
-                }
-                else
-                {
-                    dtext = string.Format("기한 {0}영업일 지남", -남은);
-                    dcolor = 긴급색;
-                }
-
-                bool done = row.최종단계도달;
-                bool handled = row.오늘처리됨(today);
-
-                // 심각도는 카드 맨 위 한 줄과 왼쪽 띠, 두 곳에서 같은 말을 한다.
-                심각도.Text = done ? "처리 완료" : dtext;
-                심각도.ForeColor = done ? 흐린글씨 : dcolor;
-                Panel.띠색 = done ? Ui.테두리 : (남은 <= 0 ? Ui.위험 : Ui.아주흐림);
-
-                기한.Text = "기한 " + row.Occ.보정기한일.ToString("yyyy-MM-dd");
-                기한.ForeColor = 흐린글씨;
-
-                // 지금 눌러야 할 단계가 파란 점이 된다. 끝난 건은 전부 회색.
-                단계점.설정(Stages.For(it.진행흐름), row.Status.단계 + 1, done);
-
-                Panel.BackColor = done ? Ui.펄 : (handled ? Ui.펄 : Ui.캔버스);
-                Panel.테두리색 = done ? Ui.연한선 : Ui.테두리;
-
-                // ── 버튼 ──
-                진행.Visible = !done;
-                진행.Text = done ? "" : row.다음행동;
-                if (!done)
-                {
-                    // 글자 길이에 맞춰 알약 폭을 잡는다. 고정폭이면 단계 이름이 잘린다.
-                    int w = TextRenderer.MeasureText(진행.Text, 진행.Font).Width + 34;
-                    if (w < 96) w = 96;
-                    진행.Width = w;
-                    대기.Location = new Point(진행.Left + w + 6, 진행.Top);
-                    되돌리기.Location = new Point(대기.Left + 대기.Width + 6, 진행.Top);
-                }
-                else
-                {
-                    되돌리기.Location = new Point(20, 진행.Top);
-                }
-
-                대기.Visible = !done;
-                Ui.버튼활성(대기, !handled);
-                되돌리기.Visible = row.Status.단계 > 0;
-                되돌리기.ForeColor = 흐린글씨;
-
-                var atts = store.For(row.Occ.연도, row.Occ.Item.Id);
-                if (atts.Count == 0)
-                {
-                    증빙.Text = "증빙 없음";
-                    증빙.ForeColor = Ui.아주흐림;
-                    Ui.버튼활성(열기, false);
-                }
-                else
-                {
-                    var stages = new List<string>();
-                    foreach (Attachment a in atts)
-                        if (!stages.Contains(a.단계)) stages.Add(a.단계);
-                    증빙.Text = string.Format("증빙 {0}건", atts.Count);
-                    증빙.ForeColor = 흐린글씨;
-                    Ui.버튼활성(열기, true);
-                }
-                증빙.Location = new Point(첨부.Left - 증빙.PreferredWidth - 10, 진행.Top + 11);
-            }
-
-            static string 금액표시(Occurrence occ)
-            {
-                // 그 해 고지서에서 확인한 금액 → 고정 규칙의 마스터 금액 순 (AmountRules).
-                decimal? a = AmountRules.금액(occ);
-                if (a.HasValue) return string.Format("{0:N0}원", a.Value);
-                return AmountRules.미확인(occ) ? "금액 미확인" : "금액 없음";
+                int w = i == current ? 긴폭 : 지름;
+                if (e.X >= X(i) - 3 && e.X <= X(i) + w + 3) { 눌림(i); return; }
             }
         }
     }

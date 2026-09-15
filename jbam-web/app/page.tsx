@@ -146,7 +146,7 @@ export default function Page() {
     <AppContext.Provider value={actions}>
       <SidebarProvider>
         <AppSidebar view={view} pending={head.pending} todayText={head.todayText} version={appVersion} />
-        <SidebarInset>
+        <SidebarInset className="min-w-0">
           <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/90 px-4 backdrop-blur supports-backdrop-filter:bg-background/70">
             <SidebarTrigger className="-ml-1" />
             <Separator orientation="vertical" className="mr-1 data-vertical:h-4" />
@@ -154,7 +154,7 @@ export default function Page() {
             <span className="ml-auto hidden text-sm text-muted-foreground sm:inline">{head.todayText}</span>
             <ThemeToggle />
           </header>
-          <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col gap-6 p-4 md:p-6">
+          <main className="mx-auto flex w-full min-w-0 max-w-7xl flex-1 flex-col gap-6 p-4 md:p-6">
             {view === "alerts" && <AlertsPage />}
             {view === "month" && <MonthPage />}
             {view === "year" && <YearPage />}

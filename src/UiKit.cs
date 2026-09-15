@@ -12,17 +12,18 @@ namespace PaymentAlert
     /// </summary>
     static class Ui
     {
-        // ── 색 ── 웹 시안의 :root 토큰과 1:1 로 대응한다.
-        public static readonly Color 캔버스   = Color.FromArgb(0xff, 0xff, 0xff);  // --canvas
-        public static readonly Color 양피지   = Color.FromArgb(0xf5, 0xf5, 0xf7);  // --canvas-soft
-        public static readonly Color 펄       = Color.FromArgb(0xfa, 0xfa, 0xfc);  // --field
-        public static readonly Color 테두리   = Color.FromArgb(0xe0, 0xe0, 0xe0);  // --hairline
-        public static readonly Color 연한선   = Color.FromArgb(0xf0, 0xf0, 0xf0);  // --hairline-soft
-        public static readonly Color 잉크     = Color.FromArgb(0x1d, 0x1d, 0x1f);  // --ink
-        public static readonly Color 흐린글씨 = Color.FromArgb(0x7a, 0x7a, 0x7a);  // --muted
-        public static readonly Color 아주흐림 = Color.FromArgb(0xad, 0xad, 0xad);  // --faint
-        public static readonly Color 강조     = Color.FromArgb(0x00, 0x66, 0xcc);  // --accent
-        public static readonly Color 위험     = Color.FromArgb(0xd9, 0x2d, 0x20);  // --danger
+        // ── 색 ── 웹 화면(shadcn/ui neutral 테마, ADR-0007)의 토큰을 sRGB 로 옮긴 값. 두 화면이 같은 제품으로 보이게 한다.
+        public static readonly Color 캔버스   = Color.FromArgb(0xff, 0xff, 0xff);  // --background
+        public static readonly Color 양피지   = Color.FromArgb(0xf5, 0xf5, 0xf5);  // --muted
+        public static readonly Color 펄       = Color.FromArgb(0xfa, 0xfa, 0xfa);  // --sidebar
+        public static readonly Color 테두리   = Color.FromArgb(0xe5, 0xe5, 0xe5);  // --border
+        public static readonly Color 연한선   = Color.FromArgb(0xf0, 0xf0, 0xf0);
+        public static readonly Color 잉크     = Color.FromArgb(0x0a, 0x0a, 0x0a);  // --foreground
+        public static readonly Color 흐린글씨 = Color.FromArgb(0x73, 0x73, 0x73);  // --muted-foreground
+        public static readonly Color 아주흐림 = Color.FromArgb(0xa1, 0xa1, 0xa1);
+        public static readonly Color 주요     = Color.FromArgb(0x17, 0x17, 0x17);  // --primary
+        public static readonly Color 강조     = Color.FromArgb(0x15, 0x5d, 0xfc);  // --action (지금 할 일)
+        public static readonly Color 위험     = Color.FromArgb(0xe7, 0x00, 0x0b);  // --destructive
         public static readonly Color 경고글씨 = Color.FromArgb(0x96, 0x5a, 0x00);
 
         // ── 글꼴 ──
@@ -141,14 +142,19 @@ namespace PaymentAlert
         int 해야할단계 = 0;     // 이 인덱스가 파란 점이 된다
         bool 끝났음;
 
-        const int 점 = 13;      // 웹 시안의 .st width/height
+        public int 점 = 13;          // 도형 지름
+
+        public float 라벨px = 12;    // 라벨 글자 크기(px)
         const float 선굵기 = 1.5f;
-        const int 라벨높이 = 16;
-        const int 라벨간격 = 6;
+        int 라벨높이 { get { return (int)Math.Ceiling(라벨px * 1.35f); } }
+        const int 라벨간격 = 4;
+
+        /// <summary>도형 크기·라벨 크기를 바꾼 뒤 높이를 맞춘다.</summary>
+        public void 높이맞추기() { Height = 라벨높이 + 라벨간격 + 점 + 1; }
 
         public StepDots()
         {
-            Height = 라벨높이 + 라벨간격 + 점;
+            Height = 16 + 6 + 13;
             BackColor = Color.Transparent;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                      | ControlStyles.ResizeRedraw | ControlStyles.UserPaint
@@ -202,7 +208,7 @@ namespace PaymentAlert
                 using (var pen = new Pen(선, 선굵기)) g.DrawEllipse(pen, 원);
 
                 // 라벨 — 점 중심에 맞추고, 패널 밖으로 나가지 않게 가둔다.
-                using (Font f = Ui.글꼴(12, 지금))
+                using (Font f = Ui.글꼴(라벨px, 지금))
                 {
                     Color 글씨 = 지금 ? Ui.강조 : (지나옴 ? Ui.흐린글씨 : Ui.아주흐림);
                     SizeF sz = g.MeasureString(stages[i], f);
