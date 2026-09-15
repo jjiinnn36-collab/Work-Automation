@@ -11,6 +11,15 @@ data/status.tsv
 data/run.log
 data/apikey.txt
 
+# 자료 DB — 납부 항목·금액·진행 기록이 전부 한 파일에 들어 있다
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.importing
+# 자료 폴더 위치 설정 (PC 마다 다름)
+data-folder.txt
+
 # 엑셀 원본 (기관·기한·금액 포함)
 *.xlsx
 ~$*
@@ -29,5 +38,14 @@ data/apikey.txt
 *.pdb
 build/
 
+# 화면 시안 (실제 금액 포함)
+mockup-web.html
+
 # ── 진단 결과 ────────────────────────────────────────────
 env-check-result.txt
+
+# 화면 시안 모음 (실제 금액 포함)
+mockup-web-*.html
+design-alert-web/
+design-canvas/
+design_*.md

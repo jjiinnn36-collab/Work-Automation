@@ -210,19 +210,19 @@ namespace PaymentAlert
                                    out Dictionary<string, StatusRecord> status,
                                    out BusinessDayCalendar cal)
         {
-            var warnings = new List<string>();
-            List<PaymentItem> master = Repository.LoadMaster(
-                Path.Combine(dataDir, "payment-master.tsv"), warnings);
-
-            Holidays.Cache cache = Holidays.Load(Path.Combine(dataDir, "holidays.tsv"));
-            cal = new BusinessDayCalendar(cache.Dates.Keys, cache.Years);
-
-            Dictionary<string, AmountRecord> amounts =
-                Repository.LoadAmounts(Path.Combine(dataDir, "amounts.tsv"), null);
-
-            status = Repository.LoadStatus(Path.Combine(dataDir, "status.tsv"));
-
-            DateTime? 시작일 = Repository.LoadStartDate(Path.Combine(dataDir, "start-date.txt"));
+            // 보드는 주기적으로 다시 읽는다. 연결을 붙잡아 두지 않고 읽을 때만 연다.
+            List<PaymentItem> master;
+            Dictionary<string, AmountRecord> amounts;
+            DateTime? 시작일;
+            using (Store db = Store.Open(DataPaths.Db(dataDir)))
+            {
+                master = db.LoadMaster();
+                Holidays.Cache cache = db.LoadHolidays();
+                cal = new BusinessDayCalendar(cache.Dates.Keys, cache.Years);
+                amounts = db.LoadAmounts();
+                status = db.LoadStatus();
+                시작일 = db.LoadStartDate();
+            }
             List<Occurrence> all = Scheduler.BuildOccurrences(master, cal, today, amounts, 시작일);
 
             // 원기한(제도상 기한)이 이번 달에 드는 건을 고른다.
@@ -438,15 +438,16 @@ namespace PaymentAlert
         }
 
         /// <summary>
-        /// 한 단계 되돌린다. 파일을 다시 읽어 최신 상태에서 바꾸고, 바꾼 것만 저장한다.
+        /// 한 단계 되돌린다. 자료를 다시 읽어 최신 상태에서 바꾸고, 바꾼 것만 저장한다.
         /// 팝업이 동시에 떠 있어도 서로의 변경을 지우지 않는다.
         /// </summary>
         void RevertStage(Occurrence o)
         {
             try
             {
-                string statusPath = Path.Combine(dataDir, "status.tsv");
-                Dictionary<string, StatusRecord> status = Repository.LoadStatus(statusPath);
+                // 다시 읽어 최신 상태에서 바꾼다. 팝업·웹이 그사이 바꾼 것을 덮지 않는다.
+                Dictionary<string, StatusRecord> status;
+                using (Store db = Store.Open(DataPaths.Db(dataDir))) status = db.LoadStatus();
 
                 StatusRecord st;
                 if (!status.TryGetValue(o.Key, out st) || st.단계 <= 0)
@@ -479,11 +480,8 @@ namespace PaymentAlert
                 // 되돌렸으면 오늘 확인 표시도 지운다. 그래야 팝업이 다시 물어본다.
                 st.최종확인일 = null;
 
-                var warnings = new List<string>();
-                List<PaymentItem> master = Repository.LoadMaster(
-                    Path.Combine(dataDir, "payment-master.tsv"), warnings);
-
-                Repository.SaveStatus(statusPath, new StatusRecord[] { st }, master);
+                using (Store db = Store.Open(DataPaths.Db(dataDir)))
+                    db.SaveStatus(new StatusRecord[] { st });
                 Reload();
             }
             catch (Exception ex)

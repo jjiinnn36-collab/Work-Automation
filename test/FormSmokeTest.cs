@@ -26,6 +26,19 @@ namespace PaymentAlert.Tests
             else { failed++; Console.WriteLine("  FAIL  " + name); }
         }
 
+        /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
+        static Button FindButton(Control root, string text)
+        {
+            foreach (Control c in root.Controls)
+            {
+                Button b = c as Button;
+                if (b != null && b.Text == text) return b;
+                Button found = FindButton(c, text);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
         [STAThread]
         static int Main()
         {
@@ -66,12 +79,7 @@ namespace PaymentAlert.Tests
             Check("X 버튼 비활성 (AC-25)", form.ControlBox, false);
             CheckTrue("항상 위 표시", form.TopMost);
 
-            Button close = null;
-            foreach (Control c in form.Controls)
-            {
-                Button b = c as Button;
-                if (b != null && b.Text == "닫기") close = b;
-            }
+            Button close = FindButton(form, "닫기");
             CheckTrue("닫기 버튼 존재", close != null);
             Check("초기 상태에서 닫기 비활성 (AC-11)", close.Enabled, false);
 

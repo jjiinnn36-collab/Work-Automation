@@ -1,5 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Windows.Forms;
@@ -16,11 +19,14 @@ namespace PaymentAlert
         static int Main(string[] args)
         {
             BaseDir = AppDomain.CurrentDomain.BaseDirectory;
-            DataDir = Path.Combine(BaseDir, "data");
-            LogPath = Path.Combine(DataDir, "run.log");
+            DataDir = DataPaths.자료폴더(BaseDir);
+            LogPath = DataPaths.로그(DataDir);
 
             bool 강제표시 = false;      // --force : 오늘 이미 확인한 건도 다시 표시
             bool 보드 = false;          // --board : 당월 기한 상시 보드
+            bool 웹 = false;            // --web : 내 PC 전용 웹 화면 서버
+            bool 브라우저열기 = true;   // --no-browser : 웹 서버만 띄우고 창은 열지 않는다
+            string 가져오기 = null;     // --import-master / --import-amounts : 도구가 쓴 TSV 를 DB 로
             DateTime today = DateTime.Today;
             DateTime? 보드기준일 = null;   // --date 를 보드에도 적용해 다른 달을 볼 수 있게 한다
 
@@ -28,6 +34,9 @@ namespace PaymentAlert
             {
                 if (a == "--force") 강제표시 = true;
                 else if (a == "--board") 보드 = true;
+                else if (a == "--web") 웹 = true;
+                else if (a == "--no-browser") 브라우저열기 = false;
+                else if (a == "--import-master" || a == "--import-amounts") 가져오기 = a;
                 else if (a.StartsWith("--date="))
                 {
                     // 테스트용. 특정 날짜로 실행한다.
@@ -36,13 +45,35 @@ namespace PaymentAlert
                 }
             }
 
+            // 가져오기는 창 없이 끝낸다. 배치 파일이 종료 코드로 성공 여부를 판단한다.
+            if (가져오기 != null) return RunImport(가져오기);
+
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
             try
             {
+                string 준비실패 = EnsureDb();
+                if (준비실패 != null)
+                {
+                    MessageBox.Show(준비실패, "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return 2;
+                }
+
+                if (웹) return RunWeb(보드기준일, 브라우저열기);
                 if (보드) return RunBoard(보드기준일);
-                return Run(today, 강제표시);
+
+                // 웹에서 연달아 고치면 여러 번 불릴 수 있다. 팝업은 하나만 띄운다.
+                bool 첫팝업;
+                using (var mutex = new System.Threading.Mutex(true, "PaymentAlert.Popup", out 첫팝업))
+                {
+                    if (!첫팝업)
+                    {
+                        Log("알림 팝업이 이미 떠 있습니다.");
+                        return 0;
+                    }
+                    return Run(today, 강제표시);
+                }
             }
             catch (Exception ex)
             {
@@ -56,18 +87,56 @@ namespace PaymentAlert
             }
         }
 
+        /// <summary>
+        /// 자료 DB 가 없으면 기존 TSV 자료를 한 번 옮긴다.
+        /// 옮길 자료조차 없으면 사용자에게 보여줄 문구를 돌려준다. 준비되면 null.
+        /// </summary>
+        static string EnsureDb()
+        {
+            string db = DataPaths.Db(DataDir);
+            if (File.Exists(db)) return null;
+
+            string master = Path.Combine(DataPaths.가져오기폴더(BaseDir), "payment-master.tsv");
+            if (!File.Exists(master))
+                return "납부 자료가 없습니다.\r\n\r\n" + master +
+                       "\r\n\r\ndata/payment-master.sample.tsv 를 복사해서 만들어 주세요.";
+
+            Log("자료 DB 가 없어 TSV 자료를 옮깁니다. 자료 폴더: " + DataDir);
+            var log = new List<string>();
+            Importer.최초이전(BaseDir, DataDir, log);
+            foreach (string l in log) Log("  " + l);
+            Log("옮기기 완료: " + db);
+            return null;
+        }
+
+        static int RunImport(string 종류)
+        {
+            try
+            {
+                string 준비실패 = EnsureDb();
+                if (준비실패 != null)
+                {
+                    Log(준비실패.Replace("\r\n", " "));
+                    return 2;
+                }
+
+                var log = new List<string>();
+                int rc = 종류 == "--import-master"
+                    ? Importer.항목다시가져오기(BaseDir, DataDir, log)
+                    : Importer.금액다시가져오기(BaseDir, DataDir, log);
+                foreach (string l in log) Log(l);
+                return rc;
+            }
+            catch (Exception ex)
+            {
+                Log("가져오기 실패: " + ex);
+                return 1;
+            }
+        }
+
         /// <summary>당월 기한 보드를 띄운다. 처리를 강제하지 않는 보기 전용 창이다.</summary>
         static int RunBoard(DateTime? 기준일)
         {
-            string masterPath = Path.Combine(DataDir, "payment-master.tsv");
-            if (!File.Exists(masterPath))
-            {
-                MessageBox.Show(
-                    "납부 마스터 파일이 없습니다.\r\n\r\n" + masterPath,
-                    "당월 납부 기한", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return 2;
-            }
-
             // 같은 보드를 두 개 띄우지 않는다.
             bool isNew;
             using (var mutex = new System.Threading.Mutex(true, "PaymentAlert.MonthlyBoard", out isNew))
@@ -78,132 +147,192 @@ namespace PaymentAlert
                     return 0;
                 }
 
-                var board = new MonthlyBoard(DataDir, Path.Combine(BaseDir, "증빙"), 기준일);
+                var board = new MonthlyBoard(DataDir, DataPaths.증빙(DataDir), 기준일);
                 Application.Run(board);
             }
             return 0;
         }
 
-        static int Run(DateTime today, bool 강제표시)
+        /// <summary>
+        /// 웹 화면 서버를 띄우고 알림 영역 아이콘으로 남는다. 이미 떠 있으면 그 화면만 연다.
+        /// </summary>
+        static int RunWeb(DateTime? 기준일, bool 브라우저열기)
         {
-            string masterPath = Path.Combine(DataDir, "payment-master.tsv");
-            string statusPath = Path.Combine(DataDir, "status.tsv");
-            string holidayPath = Path.Combine(DataDir, "holidays.tsv");
-            string amountPath = Path.Combine(DataDir, "amounts.tsv");
-            string apiKeyPath = Path.Combine(DataDir, "apikey.txt");
-            string attachIndex = Path.Combine(DataDir, "attachments.tsv");
-            string attachRoot = Path.Combine(BaseDir, "증빙");
-            string startPath = Path.Combine(DataDir, "start-date.txt");
+            string portFile = Path.Combine(Path.GetTempPath(), "PaymentAlert.web-port");
 
-            if (!File.Exists(masterPath))
+            bool isNew;
+            using (var mutex = new System.Threading.Mutex(true, "PaymentAlert.Web", out isNew))
             {
-                MessageBox.Show(
-                    "납부 마스터 파일이 없습니다.\r\n\r\n" + masterPath +
-                    "\r\n\r\ndata/payment-master.sample.tsv 를 복사해서 만들어 주세요.",
-                    "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return 2;
+                if (!isNew)
+                {
+                    int p;
+                    if (File.Exists(portFile) && int.TryParse(File.ReadAllText(portFile).Trim(), out p))
+                        OpenBrowser("http://localhost:" + p + "/");
+                    else
+                        Log("웹 화면이 이미 실행 중이지만 주소를 알 수 없습니다.");
+                    return 0;
+                }
+
+                Func<DateTime> 오늘 = delegate { return 기준일.HasValue ? 기준일.Value : DateTime.Today; };
+                using (var server = new WebServer(DataDir, Path.Combine(BaseDir, "web"), 오늘))
+                {
+                    server.Log = Log;
+                    server.팝업요청 = delegate(string id) { 팝업띄우기(기준일, id); };
+                    server.Start(WebServer.기본포트);
+                    try { File.WriteAllText(portFile, server.Port.ToString(CultureInfo.InvariantCulture)); }
+                    catch (Exception ex) { Log("웹 포트 기록 실패: " + ex.Message); }
+                    Log("웹 화면 시작: " + server.Url + "  자료 폴더: " + DataDir);
+
+                    using (var menu = new ContextMenuStrip())
+                    using (var icon = new NotifyIcon())
+                    {
+                        menu.Items.Add("웹 화면 열기", null, delegate { OpenBrowser(server.Url); });
+                        menu.Items.Add("끄기", null, delegate { Application.ExitThread(); });
+
+                        Icon appIcon = null;
+                        try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+                        icon.Icon = appIcon ?? SystemIcons.Application;
+                        icon.Text = "납부 기한 알림 웹 화면";
+                        icon.ContextMenuStrip = menu;
+                        icon.DoubleClick += delegate { OpenBrowser(server.Url); };
+                        icon.Visible = true;
+
+                        if (브라우저열기) OpenBrowser(server.Url);
+                        Application.Run();
+                        icon.Visible = false;
+                    }
+
+                    try { File.Delete(portFile); } catch { }
+                    Log("웹 화면 종료");
+                }
             }
-
-            var warnings = new List<string>();
-            List<PaymentItem> master = Repository.LoadMaster(masterPath, warnings);
-            if (master.Count == 0)
-            {
-                MessageBox.Show("납부 마스터에 유효한 항목이 없습니다.\r\n\r\n" + string.Join("\r\n", warnings.ToArray()),
-                    "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return 2;
-            }
-
-            // ── 공휴일 준비 ──────────────────────────────────────
-            var years = Scheduler.TargetYears(today);
-            Holidays.Cache cache = Holidays.Load(holidayPath);
-
-            string apiKey = null;
-            if (File.Exists(apiKeyPath))
-                apiKey = File.ReadAllText(apiKeyPath, Encoding.UTF8).Trim();
-
-            string refreshMessage;
-            if (Holidays.TryRefresh(cache, apiKey, years, out refreshMessage))
-            {
-                try { Holidays.Save(holidayPath, cache); }
-                catch (Exception ex) { Log("공휴일 캐시 저장 실패: " + ex.Message); }
-            }
-            if (!string.IsNullOrEmpty(refreshMessage)) Log(refreshMessage);
-
-            var cal = new BusinessDayCalendar(cache.Dates.Keys, cache.Years);
-
-            // ── 표시 대상 계산 ───────────────────────────────────
-            Dictionary<string, AmountRecord> amounts = Repository.LoadAmounts(amountPath, warnings);
-            DateTime? 시작일 = Repository.LoadStartDate(startPath);
-            List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today, amounts, 시작일);
-            Dictionary<string, StatusRecord> statusMap = Repository.LoadStatus(statusPath);
-
-            if (강제표시)
-                foreach (StatusRecord st in statusMap.Values)
-                    if (st.최종확인일.HasValue && st.최종확인일.Value.Date == today.Date)
-                        st.최종확인일 = null;
-
-            RowSet set = Scheduler.BuildRows(occurrences, statusMap, cal, today);
-            List<AlertRow> rows = set.Rows;
-
-            foreach (AlertRow od in set.Overdue)
-                Log(string.Format("기한초과 미처리: {0} {1} 기한 {2} 단계 {3}",
-                    od.Occ.연도, od.Occ.Item.표시명,
-                    od.Occ.보정기한일.ToString("yyyy-MM-dd"), od.현재단계명));
-
-            if (rows.Count == 0)
-            {
-                Log(string.Format("{0}: 표시할 건 없음. (기한초과 미처리 {1}건)",
-                    today.ToString("yyyy-MM-dd"), set.Overdue.Count));
-                return 0;    // AC-24b: 물어볼 게 없으면 팝업을 띄우지 않는다
-            }
-
-            // ── 경고 문구 조립 ───────────────────────────────────
-            string warningText = BuildWarning(cache, years, warnings, masterPath);
-
-            var store = new AttachmentStore(attachIndex, attachRoot);
-            try { store.Load(); }
-            catch (Exception ex) { Log("증빙 목록을 읽지 못했습니다: " + ex.Message); }
-
-            var form = new AlertForm(rows, set.Overdue, cal, today, warningText, store);
-            Application.Run(form);
-
-            // ── 저장 ─────────────────────────────────────────────
-            try
-            {
-                Repository.SaveStatus(statusPath, statusMap.Values, master);
-                Log(string.Format("{0}: {1}건 표시, 저장 완료. (기한초과 미처리 {2}건)",
-                    today.ToString("yyyy-MM-dd"), rows.Count, set.Overdue.Count));
-            }
-            catch (Exception ex)
-            {
-                Log("상태 저장 실패: " + ex);
-                MessageBox.Show(
-                    "진행 상태를 저장하지 못했습니다.\r\n오늘 누른 내용이 기록되지 않았습니다.\r\n\r\n" + ex.Message,
-                    "납부 기한 알림 - 저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return 3;
-            }
-
             return 0;
         }
 
-        static string BuildWarning(Holidays.Cache cache, List<int> years,
-                                   List<string> masterWarnings, string masterPath)
+        /// <summary>알림 팝업을 별도 실행으로 띄운다. 웹 서버가 멈추지 않게 기다리지 않는다.</summary>
+        static void 팝업띄우기(DateTime? 기준일, string id)
+        {
+            var psi = new ProcessStartInfo(Application.ExecutablePath);
+            psi.WorkingDirectory = BaseDir;
+            psi.UseShellExecute = false;
+            if (기준일.HasValue)
+                psi.Arguments = "--date=" + 기준일.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            using (Process.Start(psi)) { }
+            Log("웹에서 고친 항목이 오늘 알릴 건이라 알림 팝업을 띄웁니다: " + id);
+        }
+
+        static void OpenBrowser(string url)
+        {
+            try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+            catch (Exception ex) { Log("브라우저를 열지 못했습니다: " + ex.Message); }
+        }
+
+        static int Run(DateTime today, bool 강제표시)
+        {
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+            {
+                List<PaymentItem> master = db.LoadMaster();
+                if (master.Count == 0)
+                {
+                    MessageBox.Show("납부 항목이 없습니다.\r\n\r\nconvert-excel.bat 으로 엑셀 양식을 가져와 주세요.",
+                        "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return 2;
+                }
+
+                // ── 공휴일 준비 ──────────────────────────────────────
+                var years = Scheduler.TargetYears(today);
+                Holidays.Cache cache = db.LoadHolidays();
+
+                string apiKey = null;
+                string apiKeyPath = DataPaths.ApiKey(DataDir);
+                if (File.Exists(apiKeyPath))
+                    apiKey = File.ReadAllText(apiKeyPath, Encoding.UTF8).Trim();
+
+                string refreshMessage;
+                if (Holidays.TryRefresh(cache, apiKey, years, out refreshMessage))
+                {
+                    try { db.SaveHolidays(cache); }
+                    catch (Exception ex) { Log("공휴일 저장 실패: " + ex.Message); }
+                }
+                if (!string.IsNullOrEmpty(refreshMessage)) Log(refreshMessage);
+
+                var cal = new BusinessDayCalendar(cache.Dates.Keys, cache.Years);
+
+                // ── 표시 대상 계산 ───────────────────────────────────
+                Dictionary<string, AmountRecord> amounts = db.LoadAmounts();
+                DateTime? 시작일 = db.LoadStartDate();
+                List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today, amounts, 시작일);
+                Dictionary<string, StatusRecord> statusMap = db.LoadStatus();
+
+                if (강제표시)
+                    foreach (StatusRecord st in statusMap.Values)
+                        if (st.최종확인일.HasValue && st.최종확인일.Value.Date == today.Date)
+                            st.최종확인일 = null;
+
+                RowSet set = Scheduler.BuildRows(occurrences, statusMap, cal, today);
+                List<AlertRow> rows = set.Rows;
+
+                foreach (AlertRow od in set.Overdue)
+                    Log(string.Format("기한초과 미처리: {0} {1} 기한 {2} 단계 {3}",
+                        od.Occ.연도, od.Occ.Item.표시명,
+                        od.Occ.보정기한일.ToString("yyyy-MM-dd"), od.현재단계명));
+
+                if (rows.Count == 0)
+                {
+                    Log(string.Format("{0}: 표시할 건 없음. (기한초과 미처리 {1}건)",
+                        today.ToString("yyyy-MM-dd"), set.Overdue.Count));
+                    return 0;    // AC-24b: 물어볼 게 없으면 팝업을 띄우지 않는다
+                }
+
+                // ── 경고 문구 조립 ───────────────────────────────────
+                string warningText = BuildWarning(db, cache, years);
+
+                var store = new AttachmentStore(db, DataPaths.증빙(DataDir));
+                try { store.Load(); }
+                catch (Exception ex) { Log("증빙 목록을 읽지 못했습니다: " + ex.Message); }
+
+                var form = new AlertForm(rows, set.Overdue, cal, today, warningText, store);
+                Application.Run(form);
+
+                // ── 저장 ─────────────────────────────────────────────
+                try
+                {
+                    db.SaveStatus(statusMap.Values);
+                    Log(string.Format("{0}: {1}건 표시, 저장 완료. (기한초과 미처리 {2}건)",
+                        today.ToString("yyyy-MM-dd"), rows.Count, set.Overdue.Count));
+                }
+                catch (Exception ex)
+                {
+                    Log("상태 저장 실패: " + ex);
+                    MessageBox.Show(
+                        "진행 상태를 저장하지 못했습니다.\r\n오늘 누른 내용이 기록되지 않았습니다.\r\n\r\n" + ex.Message,
+                        "납부 기한 알림 - 저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return 3;
+                }
+
+                return 0;
+            }
+        }
+
+        static string BuildWarning(Store db, Holidays.Cache cache, List<int> years)
         {
             var parts = new List<string>();
 
-            // 엑셀 양식을 고치고 변환을 잊으면 프로그램은 옛 자료로 계속 돈다.
+            // 엑셀 양식을 고치고 가져오기를 잊으면 프로그램은 옛 자료로 계속 돈다.
             // 알아채기 어려운 실패라 반드시 눈에 띄게 알린다.
-            string templatePath = Path.Combine(DataDir, "payment-master-template.xlsx");
-            if (File.Exists(templatePath) && File.Exists(masterPath))
+            string templatePath = Path.Combine(DataPaths.가져오기폴더(BaseDir), "payment-master-template.xlsx");
+            string 기록 = db.GetMeta("master_updated_at");
+            DateTime 가져온시각;
+            if (File.Exists(templatePath) && 기록 != null &&
+                DateTime.TryParse(기록, CultureInfo.InvariantCulture, DateTimeStyles.None, out 가져온시각))
             {
                 DateTime x = File.GetLastWriteTime(templatePath);
-                DateTime t = File.GetLastWriteTime(masterPath);
-                if (x > t)
+                if (x > 가져온시각)
                 {
                     parts.Add(string.Format(
-                        "엑셀 양식이 납부 자료보다 최신입니다 (양식 {0}, 자료 {1}). " +
+                        "엑셀 양식이 가져온 항목보다 최신입니다 (양식 {0}, 가져옴 {1}). " +
                         "엑셀에서 고친 내용이 아직 반영되지 않았습니다. convert-excel.bat 을 실행하세요.",
-                        x.ToString("MM-dd HH:mm"), t.ToString("MM-dd HH:mm")));
+                        x.ToString("MM-dd HH:mm"), 가져온시각.ToString("MM-dd HH:mm")));
                 }
             }
 
@@ -215,16 +344,13 @@ namespace PaymentAlert
             {
                 parts.Add(string.Format(
                     "{0}년 공휴일 자료가 없습니다. 해당 연도는 주말만 반영해 계산하며, 안전을 위해 알림을 이틀 앞당겼습니다. " +
-                    "data/holidays.tsv 를 채우거나 data/apikey.txt 에 공공데이터포털 서비스키를 넣어 주세요.",
+                    "자료 폴더의 apikey.txt 에 공공데이터포털 서비스키를 넣어 주세요.",
                     string.Join(", ", missing.ToArray())));
             }
             else if (cache.경과일 > 90)
             {
                 parts.Add(string.Format("공휴일 자료를 갱신한 지 {0}일 지났습니다. 임시공휴일이 반영되지 않았을 수 있습니다.", cache.경과일));
             }
-
-            if (masterWarnings.Count > 0)
-                parts.Add("납부 마스터 확인 필요: " + string.Join(" / ", masterWarnings.ToArray()));
 
             return parts.Count == 0 ? null : string.Join("\r\n", parts.ToArray());
         }

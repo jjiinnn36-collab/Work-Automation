@@ -7,7 +7,7 @@ set CSC=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe
 if not exist "%CSC%" set CSC=C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe
 if not exist "%CSC%" goto :nocsc
 
-set CORE=src\Model.cs src\Tsv.cs src\BusinessDays.cs src\Holidays.cs src\Repository.cs src\Scheduler.cs src\Attachments.cs
+set CORE=src\Model.cs src\Tsv.cs src\BusinessDays.cs src\Holidays.cs src\Repository.cs src\Scheduler.cs src\Attachments.cs src\Db.cs src\DataPaths.cs src\Importer.cs
 set OUTDIR=%TEMP%\pa_tests
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
@@ -24,7 +24,7 @@ echo.
 echo ============================================
 echo   2. 팝업 화면 테스트
 echo ============================================
-"%CSC%" /nologo /target:exe /out:"%OUTDIR%\Smoke.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll %CORE% src\AlertForm.cs test\FormSmokeTest.cs
+"%CSC%" /nologo /target:exe /out:"%OUTDIR%\Smoke.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll %CORE% src\UiKit.cs src\AlertForm.cs test\FormSmokeTest.cs
 if not exist "%OUTDIR%\Smoke.exe" goto :buildfail
 "%OUTDIR%\Smoke.exe"
 set RC2=%errorlevel%
@@ -38,12 +38,32 @@ if not exist "%OUTDIR%\Report.exe" goto :buildfail
 "%OUTDIR%\Report.exe" %1
 set RC3=%errorlevel%
 
+echo.
+echo ============================================
+echo   4. 자료 DB (SQLite) 테스트
+echo ============================================
+"%CSC%" /nologo /target:exe /out:"%OUTDIR%\DbTests.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll %CORE% test\DbTests.cs
+if not exist "%OUTDIR%\DbTests.exe" goto :buildfail
+"%OUTDIR%\DbTests.exe"
+set RC4=%errorlevel%
+
+echo.
+echo ============================================
+echo   5. 웹 화면 서버 테스트
+echo ============================================
+"%CSC%" /nologo /target:exe /out:"%OUTDIR%\WebTests.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll %CORE% src\WebJson.cs src\WebServer.cs test\WebTests.cs
+if not exist "%OUTDIR%\WebTests.exe" goto :buildfail
+"%OUTDIR%\WebTests.exe"
+set RC5=%errorlevel%
+
 rd /s /q "%OUTDIR%" >nul 2>&1
 
 echo.
 if not "%RC3%"=="0" goto :failed
 if not "%RC1%"=="0" goto :failed
 if not "%RC2%"=="0" goto :failed
+if not "%RC4%"=="0" goto :failed
+if not "%RC5%"=="0" goto :failed
 echo  전체 통과.
 echo.
 pause

@@ -7,21 +7,30 @@ using System.Text;
 namespace PaymentAlert
 {
     /// <summary>
-    /// 증빙 파일 보관소.
-    /// 목록은 data/attachments.tsv 에, 실제 파일은 증빙/{연도}/{id}/ 아래에 둔다.
+    /// 증빙 파일 보관소. 실제 파일은 증빙/{연도}/{id}/ 아래에 둔다.
+    /// 목록은 자료 DB 에 두고, 시험과 옛 자료 이전을 위해 TSV 목록으로도 열 수 있다.
     /// </summary>
     public class AttachmentStore
     {
-        readonly string indexPath;
+        readonly string indexPath;   // TSV 목록 방식일 때만 쓴다
+        readonly Store db;           // DB 목록 방식일 때만 쓴다
         readonly string rootDir;
 
         /// <summary>(연도, id) -> 첨부 목록</summary>
         readonly Dictionary<string, List<Attachment>> byKey =
             new Dictionary<string, List<Attachment>>(StringComparer.Ordinal);
 
+        /// <summary>TSV 목록 방식. 시험과 옛 자료 이전에서 쓴다.</summary>
         public AttachmentStore(string indexPath, string rootDir)
         {
             this.indexPath = indexPath;
+            this.rootDir = rootDir;
+        }
+
+        /// <summary>DB 목록 방식. 프로그램은 이것을 쓴다. 첨부·삭제가 곧바로 DB 에 기록된다.</summary>
+        public AttachmentStore(Store db, string rootDir)
+        {
+            this.db = db;
             this.rootDir = rootDir;
         }
 
@@ -30,6 +39,13 @@ namespace PaymentAlert
         public void Load()
         {
             byKey.Clear();
+
+            if (db != null)
+            {
+                foreach (Attachment a in db.LoadAttachments()) Add(a);
+                return;
+            }
+
             foreach (var row in Tsv.Read(indexPath))
             {
                 string id = Tsv.Get(row, "id");
@@ -111,14 +127,29 @@ namespace PaymentAlert
             a.저장파일 = MakeRelative(target);
             a.원본파일명 = originalName;
             a.첨부일시 = DateTime.Now;
+
+            if (db != null)
+            {
+                // 목록에 못 넣었으면 복사본도 지운다. 목록에 없는 파일이 폴더에 쌓이면 안 된다.
+                try { db.AddAttachment(a); }
+                catch
+                {
+                    try { File.Delete(target); } catch { }
+                    throw;
+                }
+            }
+
             Add(a);
-            Save();
+            if (db == null) Save();
             return a;
         }
 
         /// <summary>목록에서 빼고 복사본도 지운다.</summary>
         public void Remove(Attachment a)
         {
+            // 목록에서 먼저 뺀다. 실패하면 예외가 나가고 파일도 그대로 남는다.
+            if (db != null) db.RemoveAttachment(a);
+
             List<Attachment> list;
             if (byKey.TryGetValue(a.Key, out list)) list.Remove(a);
 
@@ -129,7 +160,7 @@ namespace PaymentAlert
             }
             catch { /* 파일을 못 지워도 목록에서는 빠져야 한다 */ }
 
-            Save();
+            if (db == null) Save();
         }
 
         public string FullPath(Attachment a)
@@ -138,8 +169,11 @@ namespace PaymentAlert
             return Path.Combine(rootDir, a.저장파일);
         }
 
+        /// <summary>TSV 목록 방식에서만 쓴다. DB 방식은 첨부·삭제 때마다 이미 기록했다.</summary>
         public void Save()
         {
+            if (db != null) return;
+
             var all = new List<Attachment>();
             foreach (var list in byKey.Values) all.AddRange(list);
 
