@@ -5,25 +5,44 @@
 # 금액은 세목 합계와 '계' 값을 대조해 일치할 때만 채택한다.
 
 param(
-    [Parameter(Mandatory = $true)][string]$Pdf,
+    [string]$Pdf,
     [switch]$Yes,           # 확인 없이 반영 (테스트용)
-    [switch]$DryRun         # 읽기만 하고 쓰지 않음
+    [switch]$DryRun,        # 읽기만 하고 쓰지 않음
+    [switch]$Result,        # 웹 서버용: 판독 결과만 '키<탭>값' 줄로 내고 아무 파일도 쓰지 않음 (ADR-0012)
+    [string]$TextFile       # 시험용: Word 대신 이미 뽑아 둔 텍스트 파일을 읽음
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Result) {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    # 결과 줄만 표준 출력에 남도록 안내 문구를 끈다. 함수가 같은 이름의 명령보다 먼저 불린다.
+    function Write-Host { }
+}
+
+function Emit([string]$key, $value) {
+    $v = [string]$value
+    Write-Output ($key + "`t" + ($v -replace "[`r`n`t]", " "))
+}
 $root = Split-Path -Parent $PSScriptRoot
 $masterPath  = Join-Path $root "data\payment-master.tsv"
 $amountsPath = Join-Path $root "data\amounts.tsv"
 
 function Fail([string]$msg, [int]$code) {
+    if ($Result) { Emit "ok" "false"; Emit "code" $code; Emit "message" $msg; exit $code }
     Write-Host ""
     Write-Host "  [중단] $msg"
     Write-Host ""
     exit $code
 }
 
-if (-not (Test-Path $Pdf)) { Fail "파일이 없습니다: $Pdf" 1 }
-$Pdf = (Resolve-Path $Pdf).Path
+if ($TextFile) {
+    if (-not (Test-Path $TextFile)) { Fail "텍스트 파일이 없습니다: $TextFile" 1 }
+    if (-not $Pdf) { $Pdf = $TextFile }
+} else {
+    if (-not $Pdf -or -not (Test-Path $Pdf)) { Fail "파일이 없습니다: $Pdf" 1 }
+    $Pdf = (Resolve-Path $Pdf).Path
+}
 
 Write-Host ""
 Write-Host "  파일: $(Split-Path -Leaf $Pdf)"
@@ -31,6 +50,11 @@ Write-Host "  파일: $(Split-Path -Leaf $Pdf)"
 # ── 1. 텍스트 추출 ────────────────────────────────────────
 $word = $null
 $lines = @()
+if ($TextFile) {
+    $raw = [System.IO.File]::ReadAllText($TextFile, [System.Text.Encoding]::UTF8)
+    $lines = ($raw -replace "[\x00-\x08\x0b\x0c\x0e-\x1f]", "`n") -split "`n" |
+             ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+} else {
 try {
     $word = New-Object -ComObject Word.Application
     $word.Visible = $false
@@ -51,12 +75,14 @@ finally {
         [System.Runtime.InteropServices.Marshal]::ReleaseComObject($word) | Out-Null
     }
 }
+}
 
 Write-Host "  추출 라인: $($lines.Count)"
 
 # ── 2. 문서 종류 판별 ─────────────────────────────────────
 $all = $lines -join " "
 if ($all -notmatch "국세징수법" -or $all -notmatch "부가가치세") {
+    if ($Result) { Fail "국세청 부가가치세 납부서만 자동 판독합니다. 스캔 문서(통보문·안내문)는 금액을 직접 입력하세요." 3 }
     Write-Host ""
     Write-Host "  이 도구는 국세청 부가가치세 납부서만 자동 판독합니다."
     Write-Host ""
@@ -124,6 +150,12 @@ Write-Host ("  세목 합계  : {0,18:N0}" -f $sum)
 Write-Host ("  문서상 계  : {0,18:N0}" -f $total)
 
 if ($sum -ne $total) {
+    if ($Result) {
+        Emit "ok" "false"; Emit "code" 6
+        Emit "message" "세목 합계와 문서상 '계' 가 일치하지 않아 반영하지 않습니다. 직접 입력하세요."
+        Emit "due" $due.ToString("yyyy-MM-dd"); Emit "sum" $sum; Emit "total" $total
+        exit 6
+    }
     Write-Host ""
     Write-Host "  [중단] 세목 합계와 '계' 가 일치하지 않습니다."
     Write-Host "         판독이 잘못되었을 수 있으므로 반영하지 않습니다."
@@ -132,6 +164,18 @@ if ($sum -ne $total) {
     exit 6
 }
 Write-Host "  검산 통과 (세목 합계 = 계)"
+
+if ($Result) {
+    Emit "ok" "true"
+    Emit "due" $due.ToString("yyyy-MM-dd")
+    Emit "vat" (FirstOrZero $vat)
+    Emit "edu" (FirstOrZero $edu)
+    Emit "farm" (FirstOrZero $farm)
+    Emit "surcharge" (FirstOrZero $surch)
+    Emit "sum" $sum
+    Emit "total" $total
+    exit 0
+}
 
 # ── 6. 마스터에서 대상 항목 찾기 ─────────────────────────
 if (-not (Test-Path $masterPath)) { Fail "납부 마스터가 없습니다: $masterPath" 7 }

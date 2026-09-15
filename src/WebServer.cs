@@ -22,7 +22,7 @@ namespace PaymentAlert
     /// 요청은 한 번에 하나씩 처리하고, 요청마다 DB 를 새로 연다.
     /// 그래서 팝업이 같은 시각에 써도 서로 옛 자료를 붙들고 있지 않는다.
     /// </summary>
-    public sealed class WebServer : IDisposable
+    public sealed partial class WebServer : IDisposable
     {
         public const int 기본포트 = 8317;
         const long 첨부최대 = 50L * 1024 * 1024;
@@ -119,15 +119,22 @@ namespace PaymentAlert
                 try { ctx = listener.GetContext(); }
                 catch { return; }   // 멈춤
 
-                try { Handle(ctx); }
-                catch (Exception ex)
-                {
-                    if (Log != null) Log("웹 요청 처리 실패: " + ctx.Request.Url + " " + ex);
-                }
-                finally
-                {
-                    try { ctx.Response.Close(); } catch { }
-                }
+                // 요청마다 따로 처리한다 (ADR-0012). 납부서 판독처럼 오래 걸리는 요청이 있어도
+                // 다른 화면 요청이 기다리지 않는다. DB 는 요청마다 새로 열고, 동시 쓰기는 SQLite 잠금이 줄 세운다.
+                ThreadPool.QueueUserWorkItem(delegate { 처리(ctx); });
+            }
+        }
+
+        void 처리(HttpListenerContext ctx)
+        {
+            try { Handle(ctx); }
+            catch (Exception ex)
+            {
+                if (Log != null) Log("웹 요청 처리 실패: " + ctx.Request.Url + " " + ex);
+            }
+            finally
+            {
+                try { ctx.Response.Close(); } catch { }
             }
         }
 
@@ -216,6 +223,8 @@ namespace PaymentAlert
                         Send(ctx.Response, 200, AttachmentList(env, 연도(q["y"]), 아이디(q["id"])));
                         return;
                     case "/api/settings": Send(ctx.Response, 200, Settings(env)); return;
+                    case "/api/group": Send(ctx.Response, 200, Group(env, 연도(q["y"]), q["group"])); return;
+                    case "/api/events": Send(ctx.Response, 200, Events(env, q)); return;
                     case "/api/health":
                         Send(ctx.Response, 200, new JObj().Set("ok", true).Set("version", AppInfo.버전)
                             .Set("schema", env.Db.버전).Set("today", env.Today.ToString("yyyy-MM-dd", Inv)));
@@ -231,6 +240,12 @@ namespace PaymentAlert
             HttpListenerRequest req = ctx.Request;
 
             // 첨부는 본문이 파일 자체라 양식으로 읽지 않는다.
+            if (path == "/api/import/vat")
+            {
+                using (Env env = Env.Open(dataDir, 오늘()))
+                    Send(ctx.Response, 200, ImportVat(env, req));
+                return;
+            }
             if (path == "/api/attach")
             {
                 using (Env env = Env.Open(dataDir, 오늘()))
@@ -254,6 +269,9 @@ namespace PaymentAlert
                     case "/api/item": Send(ctx.Response, 200, SaveItem(env, f)); return;
                     case "/api/item/delete": Send(ctx.Response, 200, DeleteItem(env, f)); return;
                     case "/api/settings/start-date": Send(ctx.Response, 200, SetStartDate(env, f)); return;
+                    case "/api/group/amounts": Send(ctx.Response, 200, SaveGroupAmounts(env, f)); return;
+                    case "/api/open": Send(ctx.Response, 200, OpenFile(env, f)); return;
+                    case "/api/item/move": Send(ctx.Response, 200, MoveItem(env, f)); return;
                     case "/api/settings/apikey": Send(ctx.Response, 200, SetApiKey(env, f)); return;
                     case "/api/holidays/refresh": Send(ctx.Response, 200, RefreshHolidays(env)); return;
                     case "/api/backup": Send(ctx.Response, 200, BackupNow(env)); return;
@@ -450,6 +468,7 @@ namespace PaymentAlert
                 if (!orgs.Contains(o.Item.기관)) orgs.Add(o.Item.기관);
 
                 if (done) finished.Insert(0, Dto(env, o, false));   // 최근 것이 위로
+                else if (기한지남) remaining.Insert(지남 - 1, Dto(env, o, false));   // 놓친 기한은 맨 위에 고정 (AC-W55)
                 else remaining.Add(Dto(env, o, false));
             }
             orgs.Sort(StringComparer.CurrentCulture);
@@ -557,7 +576,10 @@ namespace PaymentAlert
             string 안내 = "filename*=UTF-8''" + Uri.EscapeDataString(이름);
             // 브라우저가 바로 보여줄 수 있는 것만 창에서 열고, 나머지는 내려받게 한다.
             res.Headers["Content-Disposition"] = (type != null ? "inline; " : "attachment; ") + 안내;
-            res.Headers["Content-Security-Policy"] = "sandbox";
+            // PDF·이미지는 화면 안 보기창에서 연다 (AC-W105). Chrome 은 sandbox 가 걸린 PDF 를 뷰어로 열지 않으므로
+            // 이 둘에는 걸지 않는다. 그 밖의 형식은 내려받기로만 나가고 sandbox 로 막는다 (ADR-0011).
+            if (type == null) res.Headers["Content-Security-Policy"] = "sandbox";
+            else res.Headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; object-src 'self'; plugin-types application/pdf";
             res.ContentType = type ?? "application/octet-stream";
             res.StatusCode = 200;
 
@@ -625,9 +647,44 @@ namespace PaymentAlert
                 throw new HttpError(400, "id 는 영문·숫자·_·- 로 1~40자여야 합니다.");
 
             bool 새항목 = f["mode"] == "new";
+
+            // 월에 쉼표가 있으면 분할납부 회차를 한꺼번에 만든다 (AC-W32). 회차 수는 월 칸만 정한다 (AC-W42).
+            List<int> months = 월목록(f["month"]);
+            if (months.Count > 1)
+            {
+                if (!새항목) throw new HttpError(400, "여러 회차는 새로 추가할 때만 만들 수 있습니다. 회차마다 따로 고치세요.");
+                return 분할항목추가(env, f, id, months);
+            }
+
             if (새항목 && env.Item(id) != null) throw new HttpError(409, "같은 id 의 항목이 이미 있습니다: " + id);
             if (!새항목 && env.Item(id) == null) throw new HttpError(404, "고칠 항목이 없습니다: " + id);
 
+            PaymentItem it = 항목읽기(env, f, id, months[0]);
+            PaymentItem 기존 = env.Item(id);
+            it.묶음 = 기존 != null ? 기존.묶음 : "";
+
+            env.Db.UpsertItem(it);
+
+            // 기한을 당겨서 오늘 알릴 건이 됐으면 9시 예약 실행을 기다리지 않고 바로 알린다.
+            bool 팝업 = 팝업확인(env, new PaymentItem[] { it });
+            return new JObj().Set("ok", true).Set("item", ItemDto(it)).Set("popup", 팝업);
+        }
+
+        bool 팝업확인(Env env, IEnumerable<PaymentItem> items)
+        {
+            if (팝업요청 == null) return false;
+            foreach (PaymentItem it in items)
+            {
+                if (!오늘알릴건(env, it)) continue;
+                try { 팝업요청(it.Id); return true; }
+                catch (Exception ex) { if (Log != null) Log("알림 팝업을 띄우지 못했습니다: " + ex.Message); return false; }
+            }
+            return false;
+        }
+
+        /// <summary>항목 칸을 읽고 검사한다. 한 건 저장과 분할 회차 만들기가 같은 규칙을 쓴다.</summary>
+        PaymentItem 항목읽기(Env env, NameValueCollection f, string id, int month)
+        {
             var it = new PaymentItem();
             it.Id = id;
             it.기관 = 글자(f["org"], "기관", 60, true);
@@ -635,7 +692,7 @@ namespace PaymentAlert
             try { it.진행흐름 = Stages.Parse(f["flow"]); }
             catch (FormatException ex) { throw new HttpError(400, ex.Message); }
 
-            it.월 = 정수(f["month"], "월", 1, 12);
+            it.월 = month;
             string day = (f["day"] ?? "").Trim();
             if (day == "말일" || day.ToUpperInvariant() == "EOM")
             {
@@ -668,20 +725,7 @@ namespace PaymentAlert
             it.홈페이지명 = 글자(f["siteName"], "홈페이지 이름", 40, false);
             it.홈페이지주소 = 주소(f["siteUrl"]);
             if (it.홈페이지주소.Length > 0 && it.홈페이지명.Length == 0) it.홈페이지명 = "홈페이지";
-            PaymentItem 기존 = env.Item(id);
-            it.묶음 = 기존 != null ? 기존.묶음 : "";
-
-            env.Db.UpsertItem(it);
-
-            // 기한을 당겨서 오늘 알릴 건이 됐으면 9시 예약 실행을 기다리지 않고 바로 알린다.
-            bool 팝업 = false;
-            if (팝업요청 != null && 오늘알릴건(env, it))
-            {
-                try { 팝업요청(it.Id); 팝업 = true; }
-                catch (Exception ex) { if (Log != null) Log("알림 팝업을 띄우지 못했습니다: " + ex.Message); }
-            }
-
-            return new JObj().Set("ok", true).Set("item", ItemDto(it)).Set("popup", 팝업);
+            return it;
         }
 
         /// <summary>팝업과 같은 규칙으로, 이 항목이 오늘 팝업에 나올 건인지 본다.</summary>

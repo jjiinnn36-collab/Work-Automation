@@ -184,6 +184,9 @@ namespace PaymentAlert.Tests
                 동시변경과기록();
                 항목규칙();
                 설정과관리(server);
+                분할납부();
+                문서와순서와기록(server);
+                납부서판독(server);
             }
             catch (Exception ex)
             {
@@ -422,7 +425,8 @@ namespace PaymentAlert.Tests
             Check("열기 200", r.Status, 200);
             Check("내용 그대로", r.Text, "hello receipt");
             Check("PDF 형식", r.Headers["Content-Type"], "application/pdf");
-            Has("샌드박스", r.Headers["Content-Security-Policy"] ?? "", "sandbox");
+            Lacks("PDF 는 보기창에서 열리게 sandbox 없음 (ADR-0011)", r.Headers["Content-Security-Policy"] ?? "", "sandbox");
+            Has("PDF 도 스크립트는 막음", r.Headers["Content-Security-Policy"] ?? "", "default-src 'none'");
 
             Check("목록에 없는 경로 404", Get("/api/file?y=2026&id=kofia-09&f=" + E("..\\..\\납부알림.db")).Status, 404);
             Check("다른 건 이름으로 404", Get("/api/file?y=2026&id=vat-q3&f=" + E(saved)).Status, 404);
@@ -565,6 +569,144 @@ namespace PaymentAlert.Tests
             Has("수동 사본 이름", r.Text, "납부알림-수동-");
             Has("목록에 보임", Get("/api/settings").Text, "납부알림-수동-");
             Has("받은 알림에 경고 칸", Get("/api/alerts").Text, "\"warnings\":[");
+        }
+
+        static void 분할납부()
+        {
+            Console.WriteLine("\n[WEB-14] 분할납부: 월 쉼표로 회차 만들기, 회차 금액 한 창 입력 (AC-W32~W42, ADR-0010)");
+            string 공통 = "&org=" + E("협회") + "&name=" + E("연회비") + "&flow=" + E("납부만") + "&rule=" + E("변동") + "&day=20";
+            Check("같은 월 두 번 400", Post("/api/item", "mode=new&id=dues&month=" + E("5,5") + 공통).Status, 400);
+            Check("13월 400", Post("/api/item", "mode=new&id=dues&month=" + E("5,13") + 공통).Status, 400);
+            Check("고칠 때 쉼표 400", Post("/api/item", "mode=edit&id=fss-10&month=" + E("5,6") + 공통).Status, 400);
+
+            Res r = Post("/api/item", "mode=new&id=dues&month=" + E("7, 5,6") + 공통 +
+                "&amountYear=2027&source=" + E("회비 안내문") + "&amt_05=" + E("1,000,000") + "&amt_07=999998");
+            Check("세 회차 생성 200", r.Status, 200);
+            Has("id 는 접두-월, 월 순서", r.Text, "\"ids\":[\"dues-05\",\"dues-06\",\"dues-07\"]");
+            Has("금액 두 건 저장", r.Text, "\"amounts\":2");
+            Has("목록에 묶음", Get("/api/items").Text, "\"group\":\"dues\"");
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+            {
+                Dictionary<string, AmountRecord> am = db.LoadAmounts();
+                Check("연도별 금액으로 저장 (AC-W41)", am["2027\tdues-05"].금액, 1000000m);
+                Check("출처 한 번 입력", am["2027\tdues-07"].출처, "회비 안내문");
+                CheckTrue("비운 회차는 미확인으로 남음 — 나눠 채우지 않음 (AC-W37, W40)", !am.ContainsKey("2027\tdues-06"));
+                CheckTrue("마스터 고정금액이 되지 않음", !db.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "dues-05"; }).고정금액.HasValue);
+            }
+            Check("같은 회차 id 가 있으면 409", Post("/api/item", "mode=new&id=dues&month=" + E("6,8") + 공통).Status, 409);
+
+            r = Get("/api/group?y=2027&group=dues");
+            Check("묶음 조회 200", r.Status, 200);
+            Has("회차 3건", r.Text, "\"count\":3");
+            Has("합계 (AC-W35)", r.Text, "\"total\":1999998");
+            Has("입력된 회차 2", r.Text, "\"entered\":2");
+            Check("없는 묶음 404", Get("/api/group?y=2027&group=nope").Status, 404);
+
+            Check("금액 없이 저장 400 (AC-W89)", Post("/api/group/amounts", "y=2027&group=dues&amt_dues-06=").Status, 400);
+            r = Post("/api/group/amounts", "y=2027&group=dues&source=" + E("재안내") + "&amt_dues-06=" + E("1,000,000") + "&amt_dues-07=1000000");
+            Check("회차 금액 한 번에 저장 200", r.Status, 200);
+            Has("저장 2건", r.Text, "\"saved\":2");
+            Has("합계 갱신", r.Text, "\"total\":3000000");
+            Check("음수 회차 금액 400", Post("/api/group/amounts", "y=2027&group=dues&amt_dues-05=-1").Status, 400);
+
+            foreach (string id in new string[] { "dues-05", "dues-06", "dues-07" }) Post("/api/item/delete", "id=" + id);
+        }
+
+        static void 문서와순서와기록(WebServer server)
+        {
+            Console.WriteLine("\n[WEB-15] 받은 문서 첨부·기본 프로그램으로 열기·순서 옮기기·변경 기록 (ADR-0011)");
+            string 연파일 = null;
+            server.파일열기 = delegate(string p) { 연파일 = p; };
+
+            var h = 표시();
+            h["X-File-Name"] = E("산출내역.xlsx");
+            Res r = Send("POST", "/api/attach?y=2026&id=vat-q3&kind=" + E("받은문서"), Encoding.UTF8.GetBytes("xlsx"), "application/octet-stream", h);
+            Check("받은 문서 첨부 200", r.Status, 200);
+            r = Get("/api/attachments?y=2026&id=vat-q3");
+            Has("종류가 받은문서", r.Text, "\"kind\":\"받은문서\"");
+            string saved;
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+                saved = db.LoadAttachments().Find(delegate(Attachment a) { return a.Id == "vat-q3"; }).저장파일;
+
+            Res xf = Get("/api/file?y=2026&id=vat-q3&f=" + E(saved));
+            Has("xlsx 는 내려받기", xf.Headers["Content-Disposition"] ?? "", "attachment");
+            Has("xlsx 는 sandbox", xf.Headers["Content-Security-Policy"] ?? "", "sandbox");
+            Check("기본 프로그램으로 열기 200", Post("/api/open", "y=2026&id=vat-q3&f=" + E(saved)).Status, 200);
+            CheckTrue("증빙 폴더 안의 그 파일을 연다", 연파일 != null && 연파일.EndsWith(saved) && 연파일.StartsWith(DataPaths.증빙(DataDir)));
+            Check("목록에 없는 파일 404", Post("/api/open", "y=2026&id=vat-q3&f=" + E("..\\..\\납부알림.db")).Status, 404);
+            Check("표시 없는 열기 403", Send("POST", "/api/open", Encoding.UTF8.GetBytes("y=2026&id=vat-q3&f=" + E(saved)), "application/x-www-form-urlencoded", null).Status, 403);
+
+            Check("잘못된 방향 400", Post("/api/item/move", "id=vat-q3&dir=left").Status, 400);
+            r = Post("/api/item/move", "id=vat-q3&dir=up");
+            Has("위로 옮김", r.Text, "\"moved\":true");
+            string items = Get("/api/items").Text;
+            CheckTrue("vat-q3 가 fss-10 보다 앞", items.IndexOf("\"id\":\"vat-q3\"") < items.IndexOf("\"id\":\"fss-10\""));
+
+            r = Get("/api/events?y=2026&id=fss-10");
+            Check("한 건 기록 200", r.Status, 200);
+            Has("단계 이름으로 풀어 줌", r.Text, "\"to\":\"전표발행\"");
+            Has("출처", r.Text, "\"source\":\"웹\"");
+            r = Get("/api/events?from=2000-01-01&to=2100-12-31");
+            Has("기간 기록에 문서첨부", r.Text, "\"action\":\"문서첨부\"");
+            Has("설정 변경도 보임", r.Text, "\"name\":\"설정\"");
+        }
+
+        static void 납부서판독(WebServer server)
+        {
+            Console.WriteLine("\n[WEB-16] 부가세 납부서 판독 → 반영 제안, 검산 불일치·후보 없음, 느린 판독에도 서버는 응답 (AC-W17·W18·W36)");
+            byte[] pdf = Encoding.UTF8.GetBytes("%PDF-1.4 fake");
+            var h = 표시();
+
+            server.판독기 = delegate(string path) { return "ok\ttrue\ndue\t2026-10-26\nvat\t1200000\nedu\t0\nfarm\t0\nsurcharge\t0\nsum\t1200000\ntotal\t1200000\n"; };
+            Res r = Send("POST", "/api/import/vat", pdf, "application/pdf", h);
+            Check("판독 200", r.Status, 200);
+            Has("반영 제안", r.Text, "\"ok\":true");
+            Has("10월 부가세 항목", r.Text, "\"id\":\"vat-q3\"");
+            Has("금액", r.Text, "\"amount\":1200000");
+            Has("해당 연도", r.Text, "\"year\":2026");
+
+            server.판독기 = delegate(string path) { return "ok\tfalse\ncode\t6\nmessage\t세목 합계와 문서상 '계' 가 일치하지 않아 반영하지 않습니다.\nsum\t100\ntotal\t101\n"; };
+            r = Send("POST", "/api/import/vat", pdf, "application/pdf", h);
+            Has("검산 불일치는 제안하지 않음", r.Text, "\"ok\":false");
+            Has("이유", r.Text, "일치하지 않아");
+            Has("대조 숫자", r.Text, "\"total\":101");
+
+            server.판독기 = delegate(string path) { return "ok\ttrue\ndue\t2026-03-25\ntotal\t500\nsum\t500\n"; };
+            r = Send("POST", "/api/import/vat", pdf, "application/pdf", h);
+            Has("해당 월 부가세가 없으면 제안하지 않음", r.Text, "해당하는 부가세 항목이 없습니다");
+
+            server.판독기 = delegate(string path) { return "아무 말"; };
+            Check("결과 없는 도구 502", Send("POST", "/api/import/vat", pdf, "application/pdf", h).Status, 502);
+            Check("빈 파일 400", Send("POST", "/api/import/vat", new byte[0], "application/pdf", h).Status, 400);
+            Check("표시 없는 판독 403", Send("POST", "/api/import/vat", pdf, "application/pdf", null).Status, 403);
+
+            // 실제 프로세스 경로: 느린 도구는 한도에서 끊고, 그동안 다른 요청은 응답한다.
+            string fakeBase = Path.Combine(Path.GetTempPath(), "pa_fake_tools_" + Guid.NewGuid().ToString("N").Substring(0, 6));
+            Directory.CreateDirectory(Path.Combine(fakeBase, "tools"));
+            File.WriteAllText(Path.Combine(fakeBase, "tools", "import-notice.ps1"), "param($Pdf,[switch]$Result)\r\nStart-Sleep -Seconds 20\r\n", new UTF8Encoding(true));
+            string oldBase = server.BaseDir;
+            server.BaseDir = fakeBase;
+            server.판독기 = null;
+            server.판독제한초 = 3;
+            try
+            {
+                Res slow = null;
+                var t = new System.Threading.Thread(delegate() { slow = Send("POST", "/api/import/vat", pdf, "application/pdf", 표시()); });
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                t.Start();
+                System.Threading.Thread.Sleep(700);
+                var sw2 = System.Diagnostics.Stopwatch.StartNew();
+                Res health = Get("/api/health");
+                CheckTrue("판독 중에도 다른 요청은 바로 응답 (1초 이내)", health.Status == 200 && sw2.ElapsedMilliseconds < 1000);
+                t.Join(30000);
+                Check("한도 넘기면 504", slow != null ? slow.Status : -1, 504);
+                CheckTrue("한도 근처에서 끊음 (15초 안)", sw.ElapsedMilliseconds < 15000);
+            }
+            finally
+            {
+                server.BaseDir = oldBase;
+                try { Directory.Delete(fakeBase, true); } catch { }
+            }
         }
     }
 }

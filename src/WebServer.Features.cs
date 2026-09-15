@@ -1,0 +1,347 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Specialized;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Net;
+using System.Text;
+
+namespace PaymentAlert
+{
+    /// <summary>
+    /// 웹 서버 중 분할납부·문서 열기·순서·변경 기록·납부서 판독.
+    /// </summary>
+    public sealed partial class WebServer
+    {
+        /// <summary>파일을 OS 기본 프로그램으로 연다 (AC-W106). 시험에서 바꿔 끼운다.</summary>
+        public Action<string> 파일열기 = delegate(string path)
+        {
+            var psi = new ProcessStartInfo(path);
+            psi.UseShellExecute = true;
+            using (Process.Start(psi)) { }
+        };
+
+        /// <summary>
+        /// 납부서 PDF 경로 → 판독 결과 줄('키\t값'). 비어 있으면 tools\import-notice.ps1 을 별도 프로세스로 부른다 (AC-W18).
+        /// </summary>
+        public Func<string, string> 판독기;
+
+        /// <summary>판독 프로세스를 기다리는 한도. 넘으면 끊고 504.</summary>
+        public int 판독제한초 = 90;
+
+        const long 판독최대 = 20L * 1024 * 1024;
+
+        // ══ 분할납부 ═══════════════════════════════════════════════ ADR-0010
+
+        /// <summary>"5, 6,7" → [5,6,7]. 1~12, 겹침 없음. 쉼표가 없으면 한 개.</summary>
+        static List<int> 월목록(string s)
+        {
+            var list = new List<int>();
+            string t = (s ?? "").Trim();
+            if (t.IndexOf(',') < 0)
+            {
+                list.Add(정수(t, "월", 1, 12));
+                return list;
+            }
+            foreach (string part in t.Split(','))
+            {
+                string p = part.Trim();
+                if (p.Length == 0) continue;
+                int m = 정수(p, "월", 1, 12);
+                if (list.Contains(m)) throw new HttpError(400, "같은 월이 두 번 들어 있습니다: " + m + "월");
+                list.Add(m);
+            }
+            if (list.Count == 0) throw new HttpError(400, "월을 넣어 주세요.");
+            list.Sort();
+            return list;
+        }
+
+        /// <summary>
+        /// 회차마다 {id}-{MM} 항목을 만들고 묶음 이름을 id 로 둔다.
+        /// 회차 금액(amt_MM)을 같이 보내면 그 해 연도별 금액으로 저장한다 — 마스터 고정금액이 아니다 (AC-W41).
+        /// 비워 둔 회차는 미확인으로 남는다 (AC-W40). 금액을 나눠 채우지 않는다 (AC-W37).
+        /// </summary>
+        JObj 분할항목추가(Env env, NameValueCollection f, string baseId, List<int> months)
+        {
+            if (baseId.Length > 37) throw new HttpError(400, "분할납부 id 는 37자까지입니다 (뒤에 -월 이 붙습니다).");
+
+            var items = new List<PaymentItem>();
+            foreach (int m in months)
+            {
+                string id = baseId + "-" + m.ToString("00", Inv);
+                if (env.Item(id) != null) throw new HttpError(409, "같은 id 의 항목이 이미 있습니다: " + id);
+                PaymentItem it = 항목읽기(env, f, id, m);
+                it.묶음 = baseId;
+                items.Add(it);
+            }
+
+            string yText = (f["amountYear"] ?? "").Trim();
+            int year = yText.Length == 0 ? env.Today.Year : 연도(yText);
+            string source = 글자(f["source"], "출처", 60, false);
+            var amounts = new List<AmountRecord>();
+            foreach (PaymentItem it in items)
+            {
+                string raw = (f["amt_" + it.월.ToString("00", Inv)] ?? "").Trim();
+                if (raw.Length == 0 || !it.납부있음) continue;
+                amounts.Add(금액기록(env, year, it.Id, 금액(raw, it.월 + "월 금액"), source));
+            }
+
+            env.Db.UpsertItems(items);
+            if (amounts.Count > 0) env.Db.UpsertAmounts(amounts, 출처);
+
+            var ids = new List<string>();
+            foreach (PaymentItem it in items) ids.Add(it.Id);
+            return new JObj().Set("ok", true).Set("group", baseId).Set("ids", ids)
+                .Set("amounts", amounts.Count).Set("popup", 팝업확인(env, items));
+        }
+
+        static AmountRecord 금액기록(Env env, int year, string id, decimal amount, string source)
+        {
+            var rec = new AmountRecord();
+            rec.연도 = year;
+            rec.Id = id;
+            rec.금액 = amount;
+            rec.출처 = source.Length == 0 ? "웹 입력" : source;
+            rec.확인일 = env.Today;
+            return rec;
+        }
+
+        List<PaymentItem> 묶음항목(Env env, string group)
+        {
+            string g = (group ?? "").Trim();
+            if (g.Length == 0) throw new HttpError(400, "묶음 이름이 없습니다.");
+            var list = env.Master.FindAll(delegate(PaymentItem x) { return x.묶음 == g; });
+            if (list.Count == 0) throw new HttpError(404, "그런 분할납부 묶음이 없습니다: " + g);
+            list.Sort(delegate(PaymentItem a, PaymentItem b) { return a.월.CompareTo(b.월); });
+            return list;
+        }
+
+        /// <summary>한 묶음의 모든 회차를 한 표로 (AC-W33). 합계는 늘 같이 (AC-W35).</summary>
+        JObj Group(Env env, int y, string group)
+        {
+            List<PaymentItem> items = 묶음항목(env, group);
+            var rows = new List<object>();
+            decimal total = 0;
+            int entered = 0;
+            foreach (PaymentItem it in items)
+            {
+                Occurrence o = OccurrenceOf(env, it, y);
+                decimal? a = Amount(o);
+                if (a.HasValue) total += a.Value;
+                if (o.실제금액 != null) entered++;
+                bool beforeStart = env.시작일.HasValue && o.보정기한일.Date < env.시작일.Value.Date;
+                rows.Add(Dto(env, o, false).Set("beforeStart", beforeStart));
+            }
+            return new JObj()
+                .Set("year", y).Set("group", items[0].묶음)
+                .Set("org", items[0].기관).Set("name", items[0].비용명)
+                .Set("rows", rows).Set("total", total).Set("entered", entered).Set("count", items.Count);
+        }
+
+        /// <summary>회차 금액을 한 번에 저장한다. 출처는 한 번만 (AC-W34). 빈 칸은 건드리지 않는다 (AC-W89).</summary>
+        JObj SaveGroupAmounts(Env env, NameValueCollection f)
+        {
+            int y = 연도(f["y"]);
+            List<PaymentItem> items = 묶음항목(env, f["group"]);
+            string source = 글자(f["source"], "출처", 60, false);
+            var records = new List<AmountRecord>();
+            foreach (PaymentItem it in items)
+            {
+                string raw = (f["amt_" + it.Id] ?? "").Trim();
+                if (raw.Length == 0 || !it.납부있음) continue;
+                records.Add(금액기록(env, y, it.Id, 금액(raw, it.월 + "월 금액"), source));
+            }
+            if (records.Count == 0) throw new HttpError(400, "넣은 금액이 없습니다.");
+            env.Db.UpsertAmounts(records, 출처);
+            foreach (AmountRecord r in records) env.Amounts[r.Key] = r;
+            return Group(env, y, items[0].묶음).Set("saved", records.Count);
+        }
+
+        // ══ 문서 열기·순서·기록 ═══════════════════════════════════ ADR-0011
+
+        /// <summary>브라우저가 못 보여 주는 형식(xlsx·hwp)을 이 PC 의 기본 프로그램으로 연다.</summary>
+        JObj OpenFile(Env env, NameValueCollection f)
+        {
+            int y = 연도(f["y"]);
+            string id = 아이디(f["id"]);
+            Attachment hit = null;
+            foreach (Attachment a in env.Files.For(y, id))
+                if (a.저장파일 == f["f"]) { hit = a; break; }
+            if (hit == null) throw new HttpError(404, "증빙을 찾을 수 없습니다.");
+
+            string root = Path.GetFullPath(env.Files.RootDir).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+            string full = Path.GetFullPath(env.Files.FullPath(hit));
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase))
+                throw new HttpError(403, "증빙 폴더 밖의 파일입니다.");
+            if (!System.IO.File.Exists(full)) throw new HttpError(404, "증빙 파일이 지워졌습니다.");
+
+            파일열기(full);
+            return new JObj().Set("ok", true);
+        }
+
+        JObj MoveItem(Env env, NameValueCollection f)
+        {
+            PaymentItem it = 항목(env, f["id"]);
+            string dir = f["dir"];
+            if (dir != "up" && dir != "down") throw new HttpError(400, "dir 은 up 또는 down 이어야 합니다.");
+            bool moved = env.Db.MoveItem(it.Id, dir == "up" ? -1 : 1);
+            return new JObj().Set("ok", true).Set("moved", moved);
+        }
+
+        /// <summary>한 건의 변경 기록(y,id) 또는 기간의 전체 기록(from,to). 최근 것이 먼저.</summary>
+        JObj Events(Env env, NameValueCollection q)
+        {
+            List<StatusEvent> list;
+            if (!string.IsNullOrEmpty(q["id"]))
+                list = env.Db.LoadEvents(연도(q["y"]), 아이디(q["id"]));
+            else
+                list = env.Db.LoadEvents(날짜(q["from"], env.Today.AddDays(-30)), 날짜(q["to"], env.Today), 500);
+
+            var rows = new List<object>();
+            foreach (StatusEvent e in list)
+            {
+                PaymentItem it = env.Item(e.Id);
+                string[] stages = it != null ? Stages.For(it.진행흐름) : null;
+                Func<int?, string> 이름 = delegate(int? s)
+                {
+                    if (!s.HasValue || stages == null || s.Value < 0 || s.Value >= stages.Length) return null;
+                    return stages[s.Value];
+                };
+                rows.Add(new JObj()
+                    .Set("at", e.시각.ToString("yyyy-MM-dd HH:mm:ss", Inv))
+                    .Set("year", e.연도).Set("id", e.Id)
+                    .Set("name", it != null ? it.비용명 : (e.Id == "-" ? "설정" : e.Id))
+                    .Set("org", it != null ? it.기관 : "")
+                    .Set("action", e.동작).Set("source", e.출처).Set("detail", e.내용)
+                    .Set("from", 이름(e.이전단계)).Set("to", 이름(e.이후단계)));
+            }
+            return new JObj().Set("rows", rows);
+        }
+
+        // ══ 부가세 납부서 판독 ═══════════════════════════════════ ADR-0012
+
+        /// <summary>
+        /// PDF 를 받아 판독하고 반영할 항목과 금액을 **제안만** 한다. 저장은 화면에서 확인한 뒤 /api/amount 로 한다.
+        /// 세목 합계와 문서상 '계' 가 다르면 제안하지 않는다 (AC-W17, W36).
+        /// </summary>
+        JObj ImportVat(Env env, HttpListenerRequest req)
+        {
+            if (req.ContentLength64 <= 0) throw new HttpError(400, "빈 파일입니다.");
+            if (req.ContentLength64 > 판독최대) throw new HttpError(413, "20MB 보다 큰 파일은 판독하지 않습니다.");
+
+            string tmpDir = Path.Combine(Path.GetTempPath(), "PaymentAlert-import", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tmpDir);
+            try
+            {
+                string pdf = Path.Combine(tmpDir, "notice.pdf");
+                using (FileStream fs = System.IO.File.Create(pdf))
+                {
+                    var buf = new byte[81920];
+                    long total = 0;
+                    int n;
+                    while ((n = req.InputStream.Read(buf, 0, buf.Length)) > 0)
+                    {
+                        total += n;
+                        if (total > 판독최대) throw new HttpError(413, "20MB 보다 큰 파일은 판독하지 않습니다.");
+                        fs.Write(buf, 0, n);
+                    }
+                }
+
+                Dictionary<string, string> r = 판독결과읽기((판독기 ?? 기본판독)(pdf));
+                string ok;
+                if (!r.TryGetValue("ok", out ok))
+                    throw new HttpError(502, "판독 도구가 결과를 내지 않았습니다.");
+
+                var res = new JObj();
+                foreach (string k in new string[] { "due", "vat", "edu", "farm", "surcharge", "sum", "total" })
+                {
+                    string v;
+                    if (!r.TryGetValue(k, out v)) continue;
+                    decimal d;
+                    if (k != "due" && decimal.TryParse(v, NumberStyles.Number, Inv, out d)) res.Set(k, d);
+                    else res.Set(k, v);
+                }
+
+                if (ok != "true")
+                {
+                    string msg;
+                    r.TryGetValue("message", out msg);
+                    return res.Set("ok", false).Set("message", string.IsNullOrEmpty(msg) ? "판독하지 못했습니다." : msg);
+                }
+
+                DateTime due;
+                decimal amount;
+                if (!DateTime.TryParseExact(r["due"], "yyyy-MM-dd", Inv, DateTimeStyles.None, out due) ||
+                    !r.ContainsKey("total") || !decimal.TryParse(r["total"], NumberStyles.Number, Inv, out amount))
+                    throw new HttpError(502, "판독 결과 형식이 올바르지 않습니다.");
+
+                // 부가세 항목 중 원기한 월이 납부기한 월과 같은 건 (기존 도구와 같은 규칙)
+                var cands = env.Master.FindAll(delegate(PaymentItem x) { return x.비용명.Contains("부가") && x.월 == due.Month; });
+                if (cands.Count != 1)
+                {
+                    var names = new List<string>();
+                    foreach (PaymentItem c in cands) names.Add(c.비용명 + " (" + c.Id + ")");
+                    return res.Set("ok", false).Set("candidates", names).Set("message", cands.Count == 0
+                        ? string.Format("납부기한 {0}월에 해당하는 부가세 항목이 없습니다. 금액을 직접 입력하세요.", due.Month)
+                        : "해당하는 부가세 항목이 여러 개입니다. 금액을 직접 입력하세요.");
+                }
+
+                PaymentItem item = cands[0];
+                AmountRecord existing;
+                env.Amounts.TryGetValue(due.Year + "\t" + item.Id, out existing);
+                return res.Set("ok", true)
+                    .Set("year", due.Year).Set("id", item.Id).Set("name", item.비용명).Set("org", item.기관)
+                    .Set("amount", amount)
+                    .Set("existing", existing != null ? (object)existing.금액 : null);
+            }
+            finally
+            {
+                try { Directory.Delete(tmpDir, true); } catch { }
+            }
+        }
+
+        /// <summary>tools\import-notice.ps1 -Result 를 별도 프로세스로. 한도를 넘기면 끊는다.</summary>
+        string 기본판독(string pdf)
+        {
+            string baseDir = string.IsNullOrEmpty(BaseDir) ? AppDomain.CurrentDomain.BaseDirectory : BaseDir;
+            string script = Path.Combine(baseDir, "tools", "import-notice.ps1");
+            if (!System.IO.File.Exists(script)) throw new HttpError(500, "판독 도구가 없습니다: " + script);
+
+            var psi = new ProcessStartInfo("powershell.exe",
+                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + "\" -Pdf \"" + pdf + "\" -Result");
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.RedirectStandardOutput = true;
+            psi.RedirectStandardError = true;
+            psi.StandardOutputEncoding = Encoding.UTF8;
+
+            using (Process p = Process.Start(psi))
+            {
+                var outTask = p.StandardOutput.ReadToEndAsync();
+                var errTask = p.StandardError.ReadToEndAsync();
+                if (!p.WaitForExit(판독제한초 * 1000))
+                {
+                    try { p.Kill(); } catch { }
+                    throw new HttpError(504, string.Format("판독이 {0}초 안에 끝나지 않아 멈췄습니다. 금액을 직접 입력하세요.", 판독제한초));
+                }
+                string output = outTask.Result;
+                if (output.Trim().Length == 0 && Log != null) Log("판독 도구 오류 출력: " + errTask.Result);
+                return output;
+            }
+        }
+
+        static Dictionary<string, string> 판독결과읽기(string text)
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (string raw in (text ?? "").Split('\n'))
+            {
+                string line = raw.TrimEnd('\r');
+                int tab = line.IndexOf('\t');
+                if (tab <= 0) continue;
+                map[line.Substring(0, tab).Trim()] = line.Substring(tab + 1).Trim();
+            }
+            return map;
+        }
+    }
+}
