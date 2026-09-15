@@ -7,7 +7,7 @@ set CSC=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe
 if not exist "%CSC%" set CSC=C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe
 if not exist "%CSC%" goto :nocsc
 
-set CORE=src\Model.cs src\Tsv.cs src\BusinessDays.cs src\Holidays.cs src\Repository.cs src\Scheduler.cs src\Attachments.cs src\Db.cs src\DataPaths.cs src\Importer.cs
+set CORE=src\Model.cs src\Tsv.cs src\BusinessDays.cs src\Holidays.cs src\Repository.cs src\Scheduler.cs src\Attachments.cs src\Db.cs src\DataPaths.cs src\Importer.cs src\Ops.cs
 set OUTDIR=%TEMP%\pa_tests
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 
@@ -56,6 +56,15 @@ if not exist "%OUTDIR%\WebTests.exe" goto :buildfail
 "%OUTDIR%\WebTests.exe"
 set RC5=%errorlevel%
 
+echo.
+echo ============================================
+echo   6. 운영 부품 (백업·기록·경고) 테스트
+echo ============================================
+"%CSC%" /nologo /target:exe /out:"%OUTDIR%\OpsTests.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll %CORE% test\OpsTests.cs
+if not exist "%OUTDIR%\OpsTests.exe" goto :buildfail
+"%OUTDIR%\OpsTests.exe"
+set RC6=%errorlevel%
+
 rd /s /q "%OUTDIR%" >nul 2>&1
 
 echo.
@@ -64,6 +73,7 @@ if not "%RC1%"=="0" goto :failed
 if not "%RC2%"=="0" goto :failed
 if not "%RC4%"=="0" goto :failed
 if not "%RC5%"=="0" goto :failed
+if not "%RC6%"=="0" goto :failed
 echo  전체 통과.
 echo.
 pause

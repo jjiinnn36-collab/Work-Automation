@@ -183,6 +183,7 @@ namespace PaymentAlert.Tests
                 잘못된요청();
                 동시변경과기록();
                 항목규칙();
+                설정과관리(server);
             }
             catch (Exception ex)
             {
@@ -505,6 +506,65 @@ namespace PaymentAlert.Tests
             r = Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + 공통 + "&siteUrl=" + E("https://example.com/a"));
             Has("이름 없이 주소만 넣으면 '홈페이지'", r.Text, "\"siteName\":\"홈페이지\"");
             Post("/api/item/delete", "id=r1");
+        }
+
+        static void 설정과관리(WebServer server)
+        {
+            Console.WriteLine("\n[WEB-13] 설정: 시작일·인증키·공휴일 갱신·백업·상태 (ADR-0008)");
+            Res r = Get("/api/health");
+            Check("health 200", r.Status, 200);
+            Has("판 번호", r.Text, "\"version\":\"" + AppInfo.버전 + "\"");
+            Has("스키마 2", r.Text, "\"schema\":2");
+
+            r = Get("/api/settings");
+            Check("settings 200", r.Status, 200);
+            Has("무결성 ok", r.Text, "\"integrity\":\"ok\"");
+            Has("인증키 없음", r.Text, "\"apiKeySet\":false");
+            Has("공휴일 연도", r.Text, "\"holidayYears\":[2025,2026,2027]");
+            Has("추적 시작일", r.Text, "\"startDate\":\"2026-09-01\"");
+
+            Check("시작일 형식 오류 400", Post("/api/settings/start-date", "date=2026/09/01").Status, 400);
+            Check("시작일 바꾸기", Post("/api/settings/start-date", "date=2026-08-01").Status, 200);
+            Has("바뀐 시작일", Get("/api/settings").Text, "\"startDate\":\"2026-08-01\"");
+            Check("시작일 비우기", Post("/api/settings/start-date", "date=").Status, 200);
+            Has("시작일 없음", Get("/api/settings").Text, "\"startDate\":null");
+            Post("/api/settings/start-date", "date=2026-09-01");
+
+            Check("인증키 없이 갱신은 400", Post("/api/holidays/refresh", "").Status, 400);
+            Check("공백 든 인증키 거절", Post("/api/settings/apikey", "key=" + E("ab cd")).Status, 400);
+            Check("인증키 저장", Post("/api/settings/apikey", "key=SECRET-KEY-123").Status, 200);
+            r = Get("/api/settings");
+            Has("인증키 있음 표시", r.Text, "\"apiKeySet\":true");
+            Lacks("인증키 값은 화면에 돌려주지 않음", r.Text, "SECRET-KEY-123");
+            Check("파일에 저장", File.ReadAllText(DataPaths.ApiKey(DataDir)), "SECRET-KEY-123");
+
+            // 네트워크 대신 가짜로 받아 온다
+            string 받은키 = null;
+            server.공휴일받기 = delegate(Holidays.Cache c, string key, List<int> years)
+            {
+                받은키 = key;
+                System.Threading.Thread.Sleep(300);
+                c.Dates[new DateTime(2026, 10, 9)] = "한글날";
+                foreach (int y in years) c.Years.Add(y);
+                c.Updated = new DateTime(2026, 9, 17);
+                return "가짜 갱신";
+            };
+            Check("갱신 시작 200", Post("/api/holidays/refresh", "").Status, 200);
+            Check("도는 중에 또 누르면 409", Post("/api/holidays/refresh", "").Status, 409);
+            for (int i = 0; i < 50 && Get("/api/settings").Text.Contains("\"running\":true"); i++) System.Threading.Thread.Sleep(100);
+            r = Get("/api/settings");
+            Has("끝나면 결과 문구", r.Text, "가짜 갱신");
+            Has("공휴일 수 늘어남", r.Text, "\"holidayCount\":4");
+            Check("저장한 인증키로 호출", 받은키, "SECRET-KEY-123");
+
+            Check("인증키 지우기", Post("/api/settings/apikey", "key=").Status, 200);
+            CheckTrue("파일도 지워짐", !File.Exists(DataPaths.ApiKey(DataDir)));
+
+            r = Post("/api/backup", "");
+            Check("지금 백업 200", r.Status, 200);
+            Has("수동 사본 이름", r.Text, "납부알림-수동-");
+            Has("목록에 보임", Get("/api/settings").Text, "납부알림-수동-");
+            Has("받은 알림에 경고 칸", Get("/api/alerts").Text, "\"warnings\":[");
         }
     }
 }

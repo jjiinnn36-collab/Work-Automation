@@ -49,3 +49,8 @@ mockup-web-*.html
 design-alert-web/
 design-canvas/
 design_*.md
+
+# 백업 위치 설정 (PC 마다 다름)과 만들다 만 사본
+backup-folder.txt
+*.db.tmp
+run.*.log

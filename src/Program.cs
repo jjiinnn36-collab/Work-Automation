@@ -177,6 +177,8 @@ namespace PaymentAlert
                 using (var server = new WebServer(DataDir, Path.Combine(BaseDir, "web"), 오늘))
                 {
                     server.Log = Log;
+                    server.BaseDir = BaseDir;
+                    using (Store db = Store.Open(DataPaths.Db(DataDir))) 일일백업(db, 오늘());
                     server.팝업요청 = delegate(string id) { 팝업띄우기(기준일, id); };
                     server.Start(WebServer.기본포트);
                     try { File.WriteAllText(portFile, server.Port.ToString(CultureInfo.InvariantCulture)); }
@@ -231,6 +233,7 @@ namespace PaymentAlert
         {
             using (Store db = Store.Open(DataPaths.Db(DataDir)))
             {
+                일일백업(db, today);
                 List<PaymentItem> master = db.LoadMaster();
                 if (master.Count == 0)
                 {
@@ -336,35 +339,25 @@ namespace PaymentAlert
                 }
             }
 
-            var missing = new List<string>();
-            foreach (int y in years)
-                if (!cache.Years.Contains(y)) missing.Add(y.ToString());
-
-            if (missing.Count > 0)
-            {
-                parts.Add(string.Format(
-                    "{0}년 공휴일 자료가 없습니다. 해당 연도는 주말만 반영해 계산하며, 안전을 위해 알림을 이틀 앞당겼습니다. " +
-                    "자료 폴더의 apikey.txt 에 공공데이터포털 서비스키를 넣어 주세요.",
-                    string.Join(", ", missing.ToArray())));
-            }
-            else if (cache.경과일 > 90)
-            {
-                parts.Add(string.Format("공휴일 자료를 갱신한 지 {0}일 지났습니다. 임시공휴일이 반영되지 않았을 수 있습니다.", cache.경과일));
-            }
-
+            parts.AddRange(Warnings.Build(cache, years, DateTime.Today));
             return parts.Count == 0 ? null : string.Join("\r\n", parts.ToArray());
+        }
+
+        /// <summary>하루 첫 실행에 DB 사본을 만든다 (ADR-0008). 실패해도 알림은 계속한다.</summary>
+        static void 일일백업(Store db, DateTime today)
+        {
+            try
+            {
+                string made = Backups.일일백업(db, Backups.폴더(BaseDir, DataDir), today, Backups.기본보관);
+                if (made != null) Log("자료 사본을 만들었습니다: " + made);
+            }
+            catch (Exception ex) { Log("자료 사본 만들기 실패: " + ex.Message); }
         }
 
         static void Log(string message)
         {
-            try
-            {
-                if (!Directory.Exists(DataDir)) Directory.CreateDirectory(DataDir);
-                File.AppendAllText(LogPath,
-                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\t" + message + "\r\n",
-                    new UTF8Encoding(true));
-            }
-            catch { /* 로그 실패로 프로그램을 멈추지 않는다 */ }
+            // 크기를 넘으면 run.1.log … 로 밀어낸다 (ADR-0008). 실패해도 멈추지 않는다.
+            LogFile.Append(LogPath, message);
         }
     }
 }

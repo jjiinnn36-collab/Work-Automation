@@ -147,6 +147,9 @@ echo. >> "%OUT%"
 
 echo ============================================ >> "%OUT%"
 echo  DONE >> "%OUT%"
+echo [15] LOCALHOST WEB (HttpListener) >> "%OUT%"
+powershell -NoProfile -Command "try{ $l=New-Object Net.HttpListener; $l.Prefixes.Add('http://localhost:8399/'); $l.Start(); 'LISTEN=OK' ; $ar=$l.BeginGetContext($null,$null); $c=New-Object Net.WebClient; $null=$c.DownloadStringAsync([Uri]'http://localhost:8399/'); if($ar.AsyncWaitHandle.WaitOne(5000)){ $ctx=$l.EndGetContext($ar); $b=[Text.Encoding]::UTF8.GetBytes('ok'); $ctx.Response.OutputStream.Write($b,0,$b.Length); $ctx.Response.Close(); 'CONNECT=OK' } else { 'CONNECT=TIMEOUT  (security software may block localhost)' }; $l.Stop() } catch { 'LISTEN=FAILED  '+$_.Exception.Message }" >> "%OUT%" 2>&1
+echo. >> "%OUT%"
 echo ============================================ >> "%OUT%"
 
 echo.

@@ -44,6 +44,24 @@ namespace PaymentAlert
         /// <summary>처리 중 난 오류를 남길 곳. 없으면 버린다.</summary>
         public Action<string> Log;
 
+        /// <summary>실행 파일 폴더. backup-folder.txt 를 찾는 곳. 비우면 자료 폴더를 쓴다.</summary>
+        public string BaseDir;
+
+        /// <summary>
+        /// 공휴일을 받아 오는 함수 (캐시, 인증키, 연도) → 결과 문구, 성공 여부는 캐시 변경으로 판단.
+        /// 시험에서 네트워크 없이 바꿔 끼울 수 있게 밖으로 뺐다.
+        /// </summary>
+        public Func<Holidays.Cache, string, List<int>, string> 공휴일받기 = delegate(Holidays.Cache c, string key, List<int> years)
+        {
+            string msg;
+            Holidays.TryRefresh(c, key, years, out msg);
+            return msg;
+        };
+
+        readonly object 작업잠금 = new object();
+        bool 공휴일작업중;
+        string 공휴일작업결과;
+
         /// <summary>
         /// 항목을 고친 결과 그 항목이 오늘 알릴 건이 되면 부른다. 인자는 항목 id.
         /// 팝업을 실제로 띄우는 일은 실행 프로그램이 맡는다.
@@ -197,6 +215,11 @@ namespace PaymentAlert
                     case "/api/attachments":
                         Send(ctx.Response, 200, AttachmentList(env, 연도(q["y"]), 아이디(q["id"])));
                         return;
+                    case "/api/settings": Send(ctx.Response, 200, Settings(env)); return;
+                    case "/api/health":
+                        Send(ctx.Response, 200, new JObj().Set("ok", true).Set("version", AppInfo.버전)
+                            .Set("schema", env.Db.버전).Set("today", env.Today.ToString("yyyy-MM-dd", Inv)));
+                        return;
                     case "/api/file": SendFile(ctx.Response, env, 연도(q["y"]), 아이디(q["id"]), q["f"]); return;
                 }
             }
@@ -230,6 +253,10 @@ namespace PaymentAlert
                         return;
                     case "/api/item": Send(ctx.Response, 200, SaveItem(env, f)); return;
                     case "/api/item/delete": Send(ctx.Response, 200, DeleteItem(env, f)); return;
+                    case "/api/settings/start-date": Send(ctx.Response, 200, SetStartDate(env, f)); return;
+                    case "/api/settings/apikey": Send(ctx.Response, 200, SetApiKey(env, f)); return;
+                    case "/api/holidays/refresh": Send(ctx.Response, 200, RefreshHolidays(env)); return;
+                    case "/api/backup": Send(ctx.Response, 200, BackupNow(env)); return;
                     case "/api/attach/delete": Send(ctx.Response, 200, DeleteAttachment(env, f)); return;
                 }
             }
@@ -244,6 +271,7 @@ namespace PaymentAlert
             public DateTime Today;
             public List<PaymentItem> Master;
             public BusinessDayCalendar Cal;
+            public Holidays.Cache 공휴일;
             public Dictionary<string, AmountRecord> Amounts;
             public DateTime? 시작일;
             public Dictionary<string, StatusRecord> Status;
@@ -260,6 +288,7 @@ namespace PaymentAlert
                     // 공휴일 갱신은 팝업이 맡는다. 웹은 저장된 것만 읽는다.
                     Holidays.Cache cache = e.Db.LoadHolidays();
                     e.Cal = new BusinessDayCalendar(cache.Dates.Keys, cache.Years);
+                    e.공휴일 = cache;
                     e.Amounts = e.Db.LoadAmounts();
                     e.시작일 = e.Db.LoadStartDate();
                     e.Status = e.Db.LoadStatus();
@@ -348,7 +377,8 @@ namespace PaymentAlert
                 .Set("rows", rows)
                 .Set("pending", 남은)
                 .Set("overdue", overdue)
-                .Set("notYet", 알림전);
+                .Set("notYet", 알림전)
+                .Set("warnings", Warnings.Build(env.공휴일, Scheduler.TargetYears(env.Today), env.Today));
         }
 
         JObj Month(Env env, string ym)
@@ -731,6 +761,126 @@ namespace PaymentAlert
                 return new JObj().Set("ok", true).Set("count", env.Files.CountFor(y, id));
             }
             throw new HttpError(404, "증빙을 찾을 수 없습니다.");
+        }
+
+        // ══ 설정·관리 ═══════════════════════════════════════════════ ADR-0008
+
+        string 백업폴더() { return Backups.폴더(string.IsNullOrEmpty(BaseDir) ? dataDir : BaseDir, dataDir); }
+
+        JObj Settings(Env env)
+        {
+            var years = new List<int>(env.공휴일.Years);
+            years.Sort();
+            var backups = new List<object>();
+            foreach (Backups.사본 b in Backups.목록(백업폴더()))
+            {
+                if (backups.Count >= 10) break;
+                backups.Add(new JObj().Set("name", b.이름).Set("size", b.크기)
+                    .Set("at", b.만든시각.ToString("yyyy-MM-dd HH:mm", Inv)));
+            }
+            bool running; string result;
+            lock (작업잠금) { running = 공휴일작업중; result = 공휴일작업결과; }
+
+            return Head(env)
+                .Set("version", AppInfo.버전)
+                .Set("schema", env.Db.버전)
+                .Set("integrity", env.Db.무결성검사())
+                .Set("dataDir", dataDir)
+                .Set("dbPath", DataPaths.Db(dataDir))
+                .Set("logPath", DataPaths.로그(dataDir))
+                .Set("backupDir", 백업폴더())
+                .Set("backups", backups)
+                .Set("apiKeySet", System.IO.File.Exists(DataPaths.ApiKey(dataDir)))
+                .Set("holidayYears", years)
+                .Set("holidayCount", env.공휴일.Dates.Count)
+                .Set("holidayUpdated", env.공휴일.Updated.HasValue ? env.공휴일.Updated.Value.ToString("yyyy-MM-dd", Inv) : null)
+                .Set("holidayJob", new JObj().Set("running", running).Set("message", result))
+                .Set("warnings", Warnings.Build(env.공휴일, Scheduler.TargetYears(env.Today), env.Today));
+        }
+
+        JObj SetStartDate(Env env, NameValueCollection f)
+        {
+            string s = (f["date"] ?? "").Trim();
+            DateTime? d = null;
+            if (s.Length > 0)
+            {
+                DateTime v;
+                if (!DateTime.TryParseExact(s, "yyyy-MM-dd", Inv, DateTimeStyles.None, out v) || v.Year < 2000 || v.Year > 2100)
+                    throw new HttpError(400, "날짜 형식이 올바르지 않습니다 (예: 2026-09-01).");
+                d = v;
+            }
+            env.Db.SetStartDate(d);
+            env.Db.AddEvent(env.Today.Year, "-", "설정", 출처, "추적 시작일 " + (d.HasValue ? s : "없음"));
+            return new JObj().Set("ok", true).Set("startDate", d.HasValue ? s : null);
+        }
+
+        /// <summary>인증키는 파일로만 두고 화면에 되돌려 주지 않는다.</summary>
+        JObj SetApiKey(Env env, NameValueCollection f)
+        {
+            string key = (f["key"] ?? "").Trim();
+            string path = DataPaths.ApiKey(dataDir);
+            if (key.Length == 0)
+            {
+                if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+                return new JObj().Set("ok", true).Set("apiKeySet", false);
+            }
+            if (key.Length > 300) throw new HttpError(400, "인증키가 너무 깁니다.");
+            foreach (char ch in key)
+                if (char.IsWhiteSpace(ch) || char.IsControl(ch)) throw new HttpError(400, "인증키에 공백이나 줄바꿈이 들어 있습니다.");
+            if (!Directory.Exists(dataDir)) Directory.CreateDirectory(dataDir);
+            System.IO.File.WriteAllText(path, key, new UTF8Encoding(false));
+            return new JObj().Set("ok", true).Set("apiKeySet", true);
+        }
+
+        /// <summary>
+        /// 공휴일 갱신은 수십 번 외부 호출이라 요청 스레드에서 하지 않는다. 뒤에서 돌리고 결과는 설정 조회로 본다.
+        /// </summary>
+        JObj RefreshHolidays(Env env)
+        {
+            string path = DataPaths.ApiKey(dataDir);
+            if (!System.IO.File.Exists(path)) throw new HttpError(400, "공공데이터포털 인증키를 먼저 넣어 주세요.");
+            string key = System.IO.File.ReadAllText(path, Encoding.UTF8).Trim();
+
+            lock (작업잠금)
+            {
+                if (공휴일작업중) throw new HttpError(409, "공휴일을 이미 받아 오는 중입니다.");
+                공휴일작업중 = true;
+                공휴일작업결과 = null;
+            }
+
+            List<int> years = Scheduler.TargetYears(env.Today);
+            string dbPath = DataPaths.Db(dataDir);
+            var t = new Thread(delegate()
+            {
+                string msg;
+                try
+                {
+                    using (Store db = Store.Open(dbPath))
+                    {
+                        Holidays.Cache cache = db.LoadHolidays();
+                        int before = cache.Dates.Count;
+                        cache.Updated = null;   // 사용자가 누른 갱신은 주기와 상관없이 받는다
+                        msg = 공휴일받기(cache, key, years) ?? "";
+                        if (cache.Updated.HasValue)
+                        {
+                            db.SaveHolidays(cache);
+                            msg = string.Format("공휴일 {0}건 → {1}건. {2}", before, cache.Dates.Count, msg).Trim();
+                        }
+                    }
+                }
+                catch (Exception ex) { msg = "공휴일을 받지 못했습니다: " + ex.Message; }
+                if (Log != null) Log("공휴일 갱신(웹): " + msg);
+                lock (작업잠금) { 공휴일작업중 = false; 공휴일작업결과 = msg; }
+            });
+            t.IsBackground = true;
+            t.Start();
+            return new JObj().Set("ok", true).Set("started", true);
+        }
+
+        JObj BackupNow(Env env)
+        {
+            string path = Backups.지금백업(env.Db, 백업폴더(), DateTime.Now);
+            return new JObj().Set("ok", true).Set("name", Path.GetFileName(path));
         }
 
         // ══ 화면용 자료 모양 ═══════════════════════════════════════
