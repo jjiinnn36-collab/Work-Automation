@@ -212,11 +212,52 @@ namespace PaymentAlert.Tests
             Res r = Get("/");
             Check("첫 화면 200", r.Status, 200);
             Has("첫 화면 제목", r.Text, "납부 기한 알림");
-            Has("CSP 머리글", r.Headers["Content-Security-Policy"] ?? "", "script-src 'self'");
-            Check("app.js 200", Get("/app.js").Status, 200);
-            Check("app.css 200", Get("/app.css").Status, 200);
+            string csp = r.Headers["Content-Security-Policy"] ?? "";
+            Has("CSP: 스크립트는 자기 출처와 해시만", csp, "script-src 'self' 'sha256-");
+            Lacks("CSP: unsafe-inline 스크립트 없음", csp.Split(';')[1], "unsafe-inline");
+            Has("CSP: 외부 연결 금지", csp, "connect-src 'self'");
+
+            // 인라인 스크립트 해시가 실제 본문과 맞는지 — 어긋나면 화면이 하얗게 멈춘다.
+            var sha = System.Security.Cryptography.SHA256.Create();
+            bool 해시일치 = true; int 인라인 = 0;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(r.Text, @"<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>"))
+            {
+                인라인++;
+                string h = "'sha256-" + Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(m.Groups[1].Value))) + "'";
+                if (!csp.Contains(h)) 해시일치 = false;
+            }
+            CheckTrue("인라인 스크립트 " + 인라인 + "개 모두 CSP 해시에 있음", 해시일치);
+
+            string webRoot = Path.GetFullPath(Directory.Exists("web") ? "web" : Path.Combine("..", "web"));
+            string[] chunks = Directory.Exists(Path.Combine(webRoot, "_next", "static"))
+                ? Directory.GetFiles(Path.Combine(webRoot, "_next", "static"), "*.js", SearchOption.AllDirectories) : new string[0];
+            CheckTrue("빌드된 화면 스크립트가 있음", chunks.Length > 0);
+            if (chunks.Length > 0)
+            {
+                string rel = chunks[0].Substring(webRoot.Length).Replace('\\', '/');
+                Res js = Get(rel);
+                Check("화면 스크립트 200", js.Status, 200);
+                Has("오래 보관 캐시 (이름에 해시)", js.Headers["Cache-Control"] ?? "", "immutable");
+                Has("스크립트 형식", js.Headers["Content-Type"] ?? "", "javascript");
+            }
+            CheckTrue("페이지가 부르는 스크립트가 모두 web 폴더에 있음", 참조파일모두있음(r.Text, webRoot));
+            Check("확장자 없는 경로는 .html", Get("/index").Status, 200);
             Check("목록에 없는 파일 404", Get("/secret.txt").Status, 404);
+            Check("허용하지 않는 형식 404", Get("/web.config").Status, 404);
+            Check("점으로 시작하는 경로 404", Get("/.git/config").Status, 404);
             Check("상위 폴더 경로 404", Get("/..%2fsrc%2fProgram.cs").Status, 404);
+            Check("역슬래시 경로 404", Get("/_next%5c..%5c..%5csrc%5cDb.cs").Status, 404);
+        }
+
+        /// <summary>index.html 의 src/href 로 부르는 /_next 파일이 web 폴더에 전부 있는가 — 빌드 복사 누락 방지.</summary>
+        static bool 참조파일모두있음(string html, string webRoot)
+        {
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(html, "(?:src|href)=\"(/_next/[^\"]+)\""))
+            {
+                string p = Path.Combine(webRoot, m.Groups[1].Value.TrimStart('/').Replace('/', '\\'));
+                if (!File.Exists(p)) { Console.WriteLine("    빠진 파일: " + m.Groups[1].Value); return false; }
+            }
+            return true;
         }
 
         static void 받은알림()

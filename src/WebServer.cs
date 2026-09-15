@@ -185,26 +185,78 @@ namespace PaymentAlert
             }
         }
 
+        static readonly Dictionary<string, string> 정적형식 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { ".html", "text/html; charset=utf-8" }, { ".js", "text/javascript; charset=utf-8" },
+            { ".css", "text/css; charset=utf-8" }, { ".txt", "text/plain; charset=utf-8" },
+            { ".json", "application/json; charset=utf-8" }, { ".ico", "image/x-icon" }, { ".svg", "image/svg+xml" },
+            { ".png", "image/png" }, { ".woff2", "font/woff2" }, { ".woff", "font/woff" },
+        };
+
+        static readonly Regex 인라인스크립트 = new Regex(@"<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)</script>", RegexOptions.IgnoreCase);
+        readonly Dictionary<string, KeyValuePair<DateTime, string>> 해시캐시 = new Dictionary<string, KeyValuePair<DateTime, string>>();
+
+        /// <summary>
+        /// 화면 파일 (ADR-0007). web 폴더 안의 정해 둔 형식만 내준다. 점으로 시작하는 이름·상위 폴더 경로는 막는다.
+        /// </summary>
         void Static(HttpListenerResponse res, string path)
         {
-            string name;
+            string rel = path == "/" ? "index.html" : path.TrimStart('/');
+            if (rel.EndsWith("/")) rel += "index.html";
+            foreach (string seg in rel.Split('/'))
+                if (seg.Length == 0 || seg.StartsWith(".") || seg.IndexOf('\\') >= 0 || seg.IndexOf(':') >= 0)
+                    throw new HttpError(404, "없는 화면입니다.");
+
+            string ext = Path.GetExtension(rel);
+            if (ext.Length == 0) { rel += ".html"; ext = ".html"; }
             string type;
-            if (path == "/" || path == "/index.html") { name = "index.html"; type = "text/html; charset=utf-8"; }
-            else if (path == "/app.js") { name = "app.js"; type = "text/javascript; charset=utf-8"; }
-            else if (path == "/app.css") { name = "app.css"; type = "text/css; charset=utf-8"; }
-            else throw new HttpError(404, "없는 화면입니다.");
+            if (!정적형식.TryGetValue(ext, out type)) throw new HttpError(404, "없는 화면입니다.");
 
-            string full = Path.Combine(webRoot, name);
-            if (!File.Exists(full)) throw new HttpError(404, "화면 파일이 없습니다: " + name);
+            string root = Path.GetFullPath(webRoot).TrimEnd('\\', '/') + Path.DirectorySeparatorChar;
+            string full = Path.GetFullPath(Path.Combine(root, rel.Replace('/', Path.DirectorySeparatorChar)));
+            if (!full.StartsWith(root, StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
+                throw new HttpError(404, "없는 화면입니다.");
 
-            res.Headers["Content-Security-Policy"] =
-                "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; " +
-                "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
             byte[] body = File.ReadAllBytes(full);
+            if (ext.Equals(".html", StringComparison.OrdinalIgnoreCase))
+            {
+                // 정적 내보내기가 넣은 인라인 스크립트만 해시로 허용한다. 'unsafe-inline' 은 쓰지 않는다.
+                res.Headers["Content-Security-Policy"] =
+                    "default-src 'self'; script-src 'self' " + 스크립트해시(full, body) + "; " +
+                    "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; " +
+                    "connect-src 'self'; frame-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+            }
+            else if (rel.StartsWith("_next/static/", StringComparison.Ordinal))
+            {
+                res.Headers["Cache-Control"] = "public, max-age=31536000, immutable";   // 이름에 내용 해시가 들어 있다
+            }
+
             res.StatusCode = 200;
             res.ContentType = type;
             res.ContentLength64 = body.Length;
             res.OutputStream.Write(body, 0, body.Length);
+        }
+
+        string 스크립트해시(string full, byte[] body)
+        {
+            DateTime mtime = File.GetLastWriteTimeUtc(full);
+            lock (해시캐시)
+            {
+                KeyValuePair<DateTime, string> hit;
+                if (해시캐시.TryGetValue(full, out hit) && hit.Key == mtime) return hit.Value;
+            }
+            var parts = new List<string>();
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                foreach (Match m in 인라인스크립트.Matches(Encoding.UTF8.GetString(body)))
+                {
+                    string h = "'sha256-" + Convert.ToBase64String(sha.ComputeHash(Encoding.UTF8.GetBytes(m.Groups[1].Value))) + "'";
+                    if (!parts.Contains(h)) parts.Add(h);
+                }
+            }
+            string joined = string.Join(" ", parts.ToArray());
+            lock (해시캐시) 해시캐시[full] = new KeyValuePair<DateTime, string>(mtime, joined);
+            return joined;
         }
 
         void Get(HttpListenerContext ctx, string path)

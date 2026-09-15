@@ -54,3 +54,8 @@ design_*.md
 backup-folder.txt
 *.db.tmp
 run.*.log
+
+# jbam-web: 템플릿 원래 git 기록과 도구 상태 (ADR-0007, decisions-needed Q9)
+jbam-web/.git-template-backup/
+jbam-web/.omc/
+jbam-web/.mcp.json

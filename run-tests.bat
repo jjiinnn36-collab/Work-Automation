@@ -65,6 +65,22 @@ if not exist "%OUTDIR%\OpsTests.exe" goto :buildfail
 "%OUTDIR%\OpsTests.exe"
 set RC6=%errorlevel%
 
+echo.
+echo ============================================
+echo   7. 웹 화면 규칙 테스트 (Node 가 있을 때만)
+echo ============================================
+set RC7=0
+where node >nul 2>&1
+if errorlevel 1 goto :nonode
+pushd jbam-web
+node --test lib/logic.test.ts
+set RC7=%errorlevel%
+popd
+goto :afternode
+:nonode
+echo  Node.js 가 없어 건너뜁니다. 화면을 고치는 PC 에서만 필요합니다.
+:afternode
+
 rd /s /q "%OUTDIR%" >nul 2>&1
 
 echo.
@@ -74,6 +90,7 @@ if not "%RC2%"=="0" goto :failed
 if not "%RC4%"=="0" goto :failed
 if not "%RC5%"=="0" goto :failed
 if not "%RC6%"=="0" goto :failed
+if not "%RC7%"=="0" goto :failed
 echo  전체 통과.
 echo.
 pause
