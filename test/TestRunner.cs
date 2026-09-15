@@ -324,7 +324,7 @@ namespace PaymentAlert.Tests
             string amPath = Path.Combine(Path.GetTempPath(), "pa_amounts.tsv");
             File.WriteAllText(amPath,
                 "연도\tid\t금액\t출처\t확인일\t비고\r\n" +
-                "2026\tfx-03\t5838089\t고지서\t2026-05-13\t1차\r\n" +
+                "2026\tfx-03\t1234560\t고지서\t2026-05-13\t1차\r\n" +
                 "2026\tfx-04\t1,840,245\t통보문\t2026-03-11\t쉼표 있는 금액\r\n" +
                 "2027\tfx-03\t6000000\t고지서\t2027-05-12\t다음 해는 금액이 다르다\r\n" +
                 "2026\tfx-05\t안내문참조\t\t\t숫자가 아닌 값\r\n",
@@ -334,7 +334,7 @@ namespace PaymentAlert.Tests
             var amounts = Repository.LoadAmounts(amPath, amWarn);
             Check("유효한 금액만 적재", amounts.Count, 3);
             Check("숫자가 아닌 행은 경고", amWarn.Count, 1);
-            Check("금액 보존", amounts["2026\tfx-03"].금액, 5838089);
+            Check("금액 보존", amounts["2026\tfx-03"].금액, 1234560);
             Check("쉼표 있는 금액 파싱", amounts["2026\tfx-04"].금액, 1840245);
             Check("출처 보존", amounts["2026\tfx-03"].출처, "고지서");
 
@@ -351,7 +351,7 @@ namespace PaymentAlert.Tests
                 if (o.Item.Id == "fx-01" && o.연도 == 2026) oNone = o;
             }
             CheckTrue("2026 발생건에 금액이 붙음", o26 != null && o26.실제금액 != null);
-            Check("2026 금액", o26.실제금액.금액, 5838089);
+            Check("2026 금액", o26.실제금액.금액, 1234560);
             Check("2027 금액은 별개", o27.실제금액.금액, 6000000);
             CheckTrue("금액 자료가 없는 건은 null", oNone != null && oNone.실제금액 == null);
 

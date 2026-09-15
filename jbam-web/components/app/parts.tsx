@@ -66,6 +66,12 @@ export function StatusBadge({ o }: { o: Occurrence }) {
         <CheckIcon /> 처리 완료
       </Badge>
     )
+  if (o.beforeStart)
+    return (
+      <Badge variant="outline" className="text-muted-foreground">
+        추적 시작 전
+      </Badge>
+    )
   if (o.severity === "overdue") return <Badge variant="destructive">{o.statusText}</Badge>
   if (o.severity === "soon") return <Badge variant="secondary">{o.statusText}</Badge>
   return (

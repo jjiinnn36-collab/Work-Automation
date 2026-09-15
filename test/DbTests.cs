@@ -80,7 +80,6 @@ namespace PaymentAlert.Tests
                 백업();
                 자료폴더설정();
                 최초이전();
-                다시가져오기();
                 항목하나씩();
                 스키마이관();
                 단계변경은원자적();
@@ -212,7 +211,7 @@ namespace PaymentAlert.Tests
                 {
                     s.UpsertAmounts(new AmountRecord[] {
                         금액(2026, "fss-05", 1840245m, "통보", "2회차"),
-                        금액(2026, "kofia-10", 5838087m, "안내", "원단위 조정") });
+                        금액(2026, "kofia-10", 1234558m, "안내", "원단위 조정") });
 
                     s.UpsertAmounts(new AmountRecord[] { 금액(2026, "web-only", 100000m, "웹 입력", "") });
 
@@ -224,7 +223,7 @@ namespace PaymentAlert.Tests
                     CheckTrue("웹에서 넣은 금액이 살아남음", m.ContainsKey("2026\tweb-only"));
                     Check("고친 금액 반영", m["2026\tfss-05"].금액, 1840246m);
                     Check("출처도 갱신", m["2026\tfss-05"].출처, "통보 정정");
-                    Check("원 단위 조정 금액 정확", m["2026\tkofia-10"].금액, 5838087m);
+                    Check("원 단위 조정 금액 정확", m["2026\tkofia-10"].금액, 1234558m);
                     Check("확인일 보존", m["2026\tkofia-10"].확인일.Value.ToString("yyyy-MM-dd"), "2026-03-11");
                 }
             }
@@ -430,7 +429,7 @@ namespace PaymentAlert.Tests
                     "bad\t기관\t월이 잘못됨\t납부만\t13\t1\t3\t\t\t\r\n");
                 TSV쓰기(Path.Combine(src, "amounts.tsv"),
                     "#주석\r\n연도\tid\t금액\t출처\t확인일\t비고\r\n" +
-                    "2026\tkofia-09\t5,838,089\t안내\t2026-05-13\t5차\r\n");
+                    "2026\tkofia-09\t1,234,560\t안내\t2026-05-13\t5차\r\n");
                 TSV쓰기(Path.Combine(src, "status.tsv"),
                     "연도\tid\t단계\t단계명\t변경일시\t최종확인일\t메모\r\n" +
                     "2026\tkofia-09\t1\t전표결재\t2026-09-10 14:03\t2026-09-10\t상신\r\n");
@@ -461,7 +460,7 @@ namespace PaymentAlert.Tests
                     List<PaymentItem> m = s.LoadMaster();
                     Check("잘못된 행은 빼고 항목 2건", m.Count, 2);
                     CheckTrue("말일 항목도 옮김", m[1].말일);
-                    Check("쉼표 금액 파싱", s.LoadAmounts()["2026\tkofia-09"].금액, 5838089m);
+                    Check("쉼표 금액 파싱", s.LoadAmounts()["2026\tkofia-09"].금액, 1234560m);
                     Check("진행 단계 옮김", s.LoadStatus()["2026\tkofia-09"].단계, 1);
                     Check("메모 옮김", s.LoadStatus()["2026\tkofia-09"].메모, "상신");
                     Check("시작일 옮김", s.LoadStartDate().Value.ToString("yyyy-MM-dd"), "2026-09-01");
@@ -490,46 +489,6 @@ namespace PaymentAlert.Tests
                 CheckTrue("거부할 때 임시 파일을 남기지 않음", !File.Exists(db + ".importing"));
                 using (Store s = Store.Open(db))
                     Check("이전 뒤 쌓인 기록 유지", s.LoadStatus()["2026\tkofia-09"].단계, 2);
-            }
-            finally { 치우기(baseDir); }
-        }
-
-        static void 다시가져오기()
-        {
-            Console.WriteLine("\n[DB-13] 납부서 판독 도구 뒤 금액 다시 가져오기");
-            string baseDir = 임시폴더("reimport");
-            try
-            {
-                string src = Path.Combine(baseDir, "data");
-                Directory.CreateDirectory(src);
-                string dataDir = src;   // 기본 위치를 그대로 쓰는 경우
-
-                using (Store s = Store.Open(DataPaths.Db(dataDir)))
-                {
-                    var items = new List<PaymentItem>();
-                    items.Add(항목("old", "기관", "옛 항목", Flow.납부만, 3, false, 10, 3, "", null));
-                    s.ReplaceMaster(items);
-                    s.SaveStatus(new StatusRecord[] { 상태(2026, "old", 2, true) });
-                    s.UpsertAmounts(new AmountRecord[] { 금액(2026, "web-only", 7777m, "웹", "") });
-                }
-
-                TSV쓰기(Path.Combine(src, "amounts.tsv"),
-                    "연도\tid\t금액\t출처\t확인일\t비고\r\n2026\told\t123\t고지서\t2026-06-01\t\r\n");
-
-                var log = new List<string>();
-                Check("금액 가져오기 성공", Importer.금액다시가져오기(baseDir, dataDir, log), 0);
-
-                using (Store s = Store.Open(DataPaths.Db(dataDir)))
-                {
-                    Check("항목은 그대로", s.LoadMaster().Count, 1);
-                    Check("진행 기록은 건드리지 않음", s.LoadStatus()["2026\told"].단계, 2);
-                    var am = s.LoadAmounts();
-                    CheckTrue("웹에서 넣은 금액 유지", am.ContainsKey("2026\tweb-only"));
-                    Check("가져온 금액 추가", am["2026\told"].금액, 123m);
-                }
-
-                File.Delete(Path.Combine(src, "amounts.tsv"));
-                CheckTrue("금액 파일이 없으면 실패 코드", Importer.금액다시가져오기(baseDir, dataDir, new List<string>()) != 0);
             }
             finally { 치우기(baseDir); }
         }

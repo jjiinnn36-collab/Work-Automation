@@ -1,6 +1,6 @@
 // 서버(src/WebServer*.cs)가 돌려주는 자료 모양. 이름은 서버 JSON 키와 같다.
 
-export type Severity = "overdue" | "soon" | "normal" | "done"
+export type Severity = "overdue" | "soon" | "normal" | "done" | "before"
 export type FlowName = "신고납부" | "납부만" | "제출만"
 
 export interface Occurrence {
@@ -59,8 +59,10 @@ export interface MonthData extends Head {
   month: number
   rows: Occurrence[]
   inProgress: number
+  upcoming: number
   done: number
   overdue: number
+  beforeStart: number
   total: number
   amountUnknown: number
 }
@@ -68,6 +70,7 @@ export interface MonthData extends Head {
 export interface YearData extends Head {
   year: number
   count: number
+  beforeStart: number
   past: number
   pastDone: number
   inProgress: number
@@ -157,23 +160,4 @@ export interface SettingsData extends Head {
   holidayUpdated: string | null
   holidayJob: { running: boolean; message: string | null }
   warnings: string[]
-}
-
-export interface ImportResult {
-  ok: boolean
-  message?: string
-  due?: string
-  vat?: number
-  edu?: number
-  farm?: number
-  surcharge?: number
-  sum?: number
-  total?: number
-  year?: number
-  id?: string
-  name?: string
-  org?: string
-  amount?: number
-  existing?: number | null
-  candidates?: string[]
 }

@@ -21,7 +21,7 @@ function occ(p: Partial<Occurrence>): Occurrence {
 }
 
 test("금액 표시와 입력 해석", () => {
-  assert.equal(won(5838089), "5,838,089")
+  assert.equal(won(1234560), "1,234,560")
   assert.equal(won(null), "")
   assert.equal(md("2026-09-18"), "09-18")
   assert.equal(parseWon("1,234,500원"), 1234500)
@@ -46,8 +46,12 @@ test("연간 상태 분류와 남은 건 정렬 — 놓친 기한이 맨 위 (AC
   const today = "2026-09-16"
   assert.equal(yearStatus(occ({ done: true, severity: "done" }), today), "done")
   assert.equal(yearStatus(occ({ severity: "overdue" }), today), "overdue")
-  assert.equal(yearStatus(occ({ alertDate: "2026-09-15" }), today), "progress")
-  assert.equal(yearStatus(occ({ alertDate: "2026-10-01", severity: "normal" }), today), "upcoming")
+  // 진행중·진행예정은 알림일이 아니라 밟은 단계로 가른다 (Q3)
+  assert.equal(yearStatus(occ({ stage: 1, alertDate: "2026-10-01", severity: "normal" }), today), "progress")
+  assert.equal(yearStatus(occ({ stage: 0, alertDate: "2026-09-15" }), today), "upcoming")
+  // 추적 시작일 이전 건은 할 일이 아니다 (Q1)
+  assert.equal(yearStatus(occ({ beforeStart: true, severity: "before" }), today), "before")
+  assert.equal(yearStatus(occ({ beforeStart: true, done: true, severity: "done" }), today), "done")
 
   const sorted = sortRemaining([
     occ({ id: "late-due", payDue: "2026-12-01", severity: "normal" }),
@@ -59,7 +63,7 @@ test("연간 상태 분류와 남은 건 정렬 — 놓친 기한이 맨 위 (AC
 
 test("연간 필터: 월·기관·상태·검색 (AC-W5)", () => {
   const today = "2026-09-16"
-  const o = occ({ org: "국세청", name: "부가세 3분기", due: "2026-10-25", alertDate: "2026-10-17", severity: "normal" })
+  const o = occ({ org: "국세청", name: "부가세 3분기", due: "2026-10-25", alertDate: "2026-10-17", severity: "normal", stage: 0 })
   const base = { month: "", org: "", status: "" as const, q: "" }
   assert.equal(matchYearFilter(o, base, today), true)
   assert.equal(matchYearFilter(o, { ...base, month: "10" }, today), true)
@@ -111,9 +115,9 @@ test("CSV: BOM, 수식 막기, 감싸기 (AC-W16)", () => {
   assert.equal(csvCell("-5"), "'-5")
   assert.equal(csvCell('a,"b"'), '"a,""b"""')
   assert.equal(csvCell(null), "")
-  const text = toCsv(["이름", "금액"], [["회비", 5838089]])
+  const text = toCsv(["이름", "금액"], [["회비", 1234560]])
   assert.ok(text.startsWith("﻿"))
-  assert.equal(text.slice(1), "이름,금액\r\n회비,5838089")
+  assert.equal(text.slice(1), "이름,금액\r\n회비,1234560")
   const c = occurrenceCsv([occ({ amount: null, amountText: "미확인" })])
   assert.equal(c.rows[0][8], "미확인")
 })

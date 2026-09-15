@@ -38,7 +38,15 @@ export function OccurrenceTable({ rows, empty, showYear = false }: { rows: Occur
           {rows.map((o) => {
             const overdue = o.severity === "overdue"
             return (
-              <TableRow key={`${o.year}-${o.id}`} className={cn(overdue && "bg-destructive/5 hover:bg-destructive/10", o.done && "text-muted-foreground")}>
+              <TableRow
+                key={`${o.year}-${o.id}`}
+                className={cn(
+                  overdue && "bg-destructive/5 hover:bg-destructive/10",
+                  o.done && "text-muted-foreground",
+                  // 추적 시작일 이전 건은 흐리게 — 일정표로는 보이되 할 일로 읽히지 않게 (Q1)
+                  o.beforeStart && "opacity-55"
+                )}
+              >
                 <TableCell className="pl-4 align-top">
                   <DueText o={o} className={cn("font-medium", overdue && "text-destructive")} />
                   {showYear && <div className="text-xs text-muted-foreground">{o.year}년</div>}
@@ -61,7 +69,7 @@ export function OccurrenceTable({ rows, empty, showYear = false }: { rows: Occur
                 <TableCell className="pr-4 align-top">
                   <div className="flex items-center justify-end gap-1.5">
                     <AdvanceButton o={o} size="xs" />
-                    {!o.done && <SiteOrDocs o={o} size="xs" />}
+                    {!o.done && !o.beforeStart && <SiteOrDocs o={o} size="xs" />}
                     <RowMenu o={o} />
                   </div>
                 </TableCell>

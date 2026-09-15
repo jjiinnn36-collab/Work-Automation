@@ -26,7 +26,6 @@ namespace PaymentAlert
             bool 보드 = false;          // --board : 당월 기한 상시 보드
             bool 웹 = false;            // --web : 내 PC 전용 웹 화면 서버
             bool 브라우저열기 = true;   // --no-browser : 웹 서버만 띄우고 창은 열지 않는다
-            string 가져오기 = null;     // --import-amounts : 납부서 판독 도구(import-notice.bat)가 쓴 금액 TSV 를 DB 로
             DateTime today = DateTime.Today;
             DateTime? 보드기준일 = null;   // --date 를 보드에도 적용해 다른 달을 볼 수 있게 한다
 
@@ -36,7 +35,6 @@ namespace PaymentAlert
                 else if (a == "--board") 보드 = true;
                 else if (a == "--web") 웹 = true;
                 else if (a == "--no-browser") 브라우저열기 = false;
-                else if (a == "--import-amounts") 가져오기 = a;
                 else if (a.StartsWith("--date="))
                 {
                     // 테스트용. 특정 날짜로 실행한다.
@@ -44,9 +42,6 @@ namespace PaymentAlert
                     if (DateTime.TryParse(a.Substring(7), out d)) { today = d.Date; 보드기준일 = d.Date; }
                 }
             }
-
-            // 가져오기는 창 없이 끝낸다. 배치 파일이 종료 코드로 성공 여부를 판단한다.
-            if (가져오기 != null) return RunImport(가져오기);
 
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
@@ -102,23 +97,6 @@ namespace PaymentAlert
                 foreach (string l in log) Log("  " + l);
             }
             return null;
-        }
-
-        static int RunImport(string 종류)
-        {
-            try
-            {
-                EnsureDb();
-                var log = new List<string>();
-                int rc = Importer.금액다시가져오기(BaseDir, DataDir, log);
-                foreach (string l in log) Log(l);
-                return rc;
-            }
-            catch (Exception ex)
-            {
-                Log("가져오기 실패: " + ex);
-                return 1;
-            }
         }
 
         /// <summary>당월 기한 보드를 띄운다. 처리를 강제하지 않는 보기 전용 창이다.</summary>

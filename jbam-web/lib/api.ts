@@ -50,7 +50,7 @@ export async function post<T>(path: string, data?: Params): Promise<T> {
   )
 }
 
-/** 파일 본문을 그대로 보낸다 (증빙 첨부·납부서 판독). */
+/** 파일 본문을 그대로 보낸다 (증빙·받은 문서 첨부). */
 export async function upload<T>(path: string, params: Params, file: File): Promise<T> {
   return read<T>(
     await fetch(path + query(params), {

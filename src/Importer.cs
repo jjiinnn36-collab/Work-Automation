@@ -165,23 +165,6 @@ namespace PaymentAlert
             return 준비결과.새로만듦;
         }
 
-        /// <summary>납부서 판독 뒤 금액을 가져온다. 합치기만 하고 지우지 않는다.</summary>
-        public static int 금액다시가져오기(string baseDir, string dataDir, List<string> log)
-        {
-            string path = Path.Combine(DataPaths.가져오기폴더(baseDir), "amounts.tsv");
-            if (!File.Exists(path)) { log.Add("금액 파일이 없습니다: " + path); return 2; }
-
-            var warnings = new List<string>();
-            Dictionary<string, AmountRecord> amounts = Repository.LoadAmounts(path, warnings);
-
-            using (Store s = Store.Open(DataPaths.Db(dataDir)))
-                s.UpsertAmounts(amounts.Values);
-
-            log.Add(string.Format("금액 {0}건을 가져왔습니다.", amounts.Count));
-            foreach (string w in warnings) log.Add("  확인: " + w);
-            return 0;
-        }
-
         static bool 같은경로(string a, string b)
         {
             return string.Equals(Path.GetFullPath(a).TrimEnd('\\', '/'),

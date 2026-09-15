@@ -119,7 +119,7 @@ namespace PaymentAlert
                 try { ctx = listener.GetContext(); }
                 catch { return; }   // 멈춤
 
-                // 요청마다 따로 처리한다 (ADR-0012). 납부서 판독처럼 오래 걸리는 요청이 있어도
+                // 요청마다 따로 처리한다 (ADR-0012). 파일을 기본 프로그램으로 여는 요청처럼 오래 걸리는 것이 있어도
                 // 다른 화면 요청이 기다리지 않는다. DB 는 요청마다 새로 열고, 동시 쓰기는 SQLite 잠금이 줄 세운다.
                 ThreadPool.QueueUserWorkItem(delegate { 처리(ctx); });
             }
@@ -292,12 +292,6 @@ namespace PaymentAlert
             HttpListenerRequest req = ctx.Request;
 
             // 첨부는 본문이 파일 자체라 양식으로 읽지 않는다.
-            if (path == "/api/import/vat")
-            {
-                using (Env env = Env.Open(dataDir, 오늘()))
-                    Send(ctx.Response, 200, ImportVat(env, req));
-                return;
-            }
             if (path == "/api/attach")
             {
                 using (Env env = Env.Open(dataDir, 오늘()))
@@ -381,14 +375,29 @@ namespace PaymentAlert
                 return null;
             }
 
-            /// <summary>해당 연도가 들어가도록 발생 건을 만든다. 시작일 이전 건은 빠진다.</summary>
+            /// <summary>
+            /// 그 해의 발생 건 전부. 추적 시작일 이전 건도 넣는다 — 화면이 '지난 건' 에 흐리게 보여 준다
+            /// (사용자 결정 2026-09-16, ADR-0014). 집계에서는 빼야 하므로 시작전() 으로 가린다.
+            /// </summary>
             public List<Occurrence> OccurrencesOf(int year)
             {
                 DateTime 기준 = year == Today.Year ? Today : new DateTime(year, 7, 1);
-                var all = Scheduler.BuildOccurrences(Master, Cal, 기준, Amounts, 시작일);
+                var all = Scheduler.BuildOccurrences(Master, Cal, 기준, Amounts, null);
                 var r = new List<Occurrence>();
                 foreach (Occurrence o in all) if (o.연도 == year) r.Add(o);
                 return r;
+            }
+
+            /// <summary>추적 시작일보다 기한이 이른 건. 할 일이 아니므로 집계·행동에서 뺀다.</summary>
+            public bool 시작전(Occurrence o)
+            {
+                return 시작일.HasValue && o.보정기한일.Date < 시작일.Value.Date;
+            }
+
+            public int 단계(Occurrence o)
+            {
+                StatusRecord st;
+                return Status.TryGetValue(o.Key, out st) ? st.단계 : 0;
             }
 
             public StatusRecord StatusOf(int year, string id)
@@ -472,23 +481,49 @@ namespace PaymentAlert
             });
 
             var list = new List<object>();
-            int 진행 = 0, 완료 = 0, 지남 = 0, 미확인 = 0;
+            var cnt = new 집계();
             decimal 합계 = 0;
+            int 미확인 = 0;
             foreach (Occurrence o in month)
             {
-                bool done = Done(env, o);
-                if (done) 완료++; else 진행++;
-                if (!done && o.보정기한일.Date < env.Today) 지남++;
-                decimal? a = Amount(o);
-                if (a.HasValue) 합계 += a.Value; else if (Unknown(o)) 미확인++;
+                if (!cnt.더하기(env, o))
+                {
+                    decimal? a = Amount(o);
+                    if (a.HasValue) 합계 += a.Value; else if (Unknown(o)) 미확인++;
+                }
                 list.Add(Dto(env, o, false));
             }
 
             return Head(env)
                 .Set("year", y).Set("month", m)
                 .Set("rows", list)
-                .Set("inProgress", 진행).Set("done", 완료).Set("overdue", 지남)
+                .Set("inProgress", cnt.진행중).Set("upcoming", cnt.진행예정).Set("done", cnt.완료).Set("overdue", cnt.지남)
+                .Set("beforeStart", cnt.시작전)
                 .Set("total", 합계).Set("amountUnknown", 미확인);
+        }
+
+        /// <summary>
+        /// 이번 달·연간이 같은 낱말로 센다 (사용자 결정 Q3, ADR-0014).
+        /// 기한 지남 = 기한이 지난 미완료, 진행중 = 한 단계라도 밟은 미완료, 진행예정 = 아직 아무 단계도 안 밟은 미완료.
+        /// 셋은 겹치지 않는다. 추적 시작일 이전 건은 어느 칸에도 넣지 않는다.
+        /// </summary>
+        sealed class 집계
+        {
+            public int 진행중, 진행예정, 완료, 지남, 시작전, 지난, 지난완료;
+
+            /// <summary>센 건이 시작일 이전이면 true (금액 합계에서도 빼라는 뜻).</summary>
+            public bool 더하기(Env env, Occurrence o)
+            {
+                if (env.시작전(o)) { 시작전++; return true; }
+                bool done = Done(env, o);
+                bool 기한지남 = o.보정기한일.Date < env.Today;
+                if (기한지남) { 지난++; if (done) 지난완료++; }
+                if (done) 완료++;
+                else if (기한지남) 지남++;
+                else if (env.단계(o) >= 1) 진행중++;
+                else 진행예정++;
+                return false;
+            }
         }
 
         JObj Year(Env env, string ys)
@@ -501,36 +536,32 @@ namespace PaymentAlert
                 return c != 0 ? c : string.Compare(a.Item.Id, b.Item.Id, StringComparison.Ordinal);
             });
 
-            int 지난 = 0, 지난완료 = 0, 진행중 = 0, 예정 = 0, 지남 = 0, 미확인 = 0;
+            var cnt = new 집계();
+            int 미확인 = 0;
             var remaining = new List<object>();
             var finished = new List<object>();
             var orgs = new List<string>();
             foreach (Occurrence o in occs)
             {
+                bool before = cnt.더하기(env, o);
                 bool done = Done(env, o);
-                bool 기한지남 = o.보정기한일.Date < env.Today;
-                if (기한지남) { 지난++; if (done) 지난완료++; }
-                if (!done)
-                {
-                    if (기한지남) 지남++;
-                    else if (o.알림일.Date <= env.Today) 진행중++;
-                    else 예정++;
-                }
-                if (Unknown(o)) 미확인++;
+                if (!before && Unknown(o)) 미확인++;
                 if (!orgs.Contains(o.Item.기관)) orgs.Add(o.Item.기관);
 
-                if (done) finished.Insert(0, Dto(env, o, false));   // 최근 것이 위로
-                else if (기한지남) remaining.Insert(지남 - 1, Dto(env, o, false));   // 놓친 기한은 맨 위에 고정 (AC-W55)
+                // 지난 건 묶음 = 끝난 건 + 추적 시작일 이전 건, 최근 것이 위로 (AC-W56)
+                if (done || before) finished.Insert(0, Dto(env, o, false));
+                else if (o.보정기한일.Date < env.Today) remaining.Insert(cnt.지남 - 1, Dto(env, o, false));   // 놓친 기한은 맨 위에 고정 (AC-W55)
                 else remaining.Add(Dto(env, o, false));
             }
             orgs.Sort(StringComparer.CurrentCulture);
 
             return Head(env)
                 .Set("year", y)
-                .Set("count", occs.Count)
-                .Set("past", 지난).Set("pastDone", 지난완료)
-                .Set("inProgress", 진행중).Set("upcoming", 예정)
-                .Set("overdue", 지남).Set("amountUnknown", 미확인)
+                .Set("count", occs.Count - cnt.시작전)
+                .Set("beforeStart", cnt.시작전)
+                .Set("past", cnt.지난).Set("pastDone", cnt.지난완료)
+                .Set("inProgress", cnt.진행중).Set("upcoming", cnt.진행예정)
+                .Set("overdue", cnt.지남).Set("amountUnknown", 미확인)
                 .Set("remaining", remaining).Set("finished", finished)
                 .Set("orgs", orgs);
         }
@@ -1024,7 +1055,9 @@ namespace PaymentAlert
 
             string text;
             string severity;
+            bool before = env.시작전(o);
             if (done) { text = "처리 완료"; severity = "done"; }
+            else if (before) { text = "추적 시작 전"; severity = "before"; }
             else
             {
                 if (left > 0) text = "D-" + left + "영업일";
@@ -1074,6 +1107,7 @@ namespace PaymentAlert
                 .Set("confirmedToday", confirmedToday)
                 .Set("changedAt", st != null && st.변경일시.HasValue ? st.변경일시.Value.ToString("yyyy-MM-dd HH:mm", Inv) : null)
                 .Set("attachments", env.Files.CountFor(o.연도, it.Id))
+                .Set("beforeStart", before)
                 .Set("memo", it.비고 ?? "");
         }
 

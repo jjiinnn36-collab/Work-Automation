@@ -10,7 +10,7 @@ using System.Text;
 namespace PaymentAlert
 {
     /// <summary>
-    /// 웹 서버 중 분할납부·문서 열기·순서·변경 기록·납부서 판독.
+    /// 웹 서버 중 분할납부·문서 열기·순서·변경 기록.
     /// </summary>
     public sealed partial class WebServer
     {
@@ -21,16 +21,6 @@ namespace PaymentAlert
             psi.UseShellExecute = true;
             using (Process.Start(psi)) { }
         };
-
-        /// <summary>
-        /// 납부서 PDF 경로 → 판독 결과 줄('키\t값'). 비어 있으면 tools\import-notice.ps1 을 별도 프로세스로 부른다 (AC-W18).
-        /// </summary>
-        public Func<string, string> 판독기;
-
-        /// <summary>판독 프로세스를 기다리는 한도. 넘으면 끊고 504.</summary>
-        public int 판독제한초 = 90;
-
-        const long 판독최대 = 20L * 1024 * 1024;
 
         // ══ 분할납부 ═══════════════════════════════════════════════ ADR-0010
 
@@ -130,8 +120,7 @@ namespace PaymentAlert
                 decimal? a = Amount(o);
                 if (a.HasValue) total += a.Value;
                 if (o.실제금액 != null) entered++;
-                bool beforeStart = env.시작일.HasValue && o.보정기한일.Date < env.시작일.Value.Date;
-                rows.Add(Dto(env, o, false).Set("beforeStart", beforeStart));
+                rows.Add(Dto(env, o, false));
             }
             return new JObj()
                 .Set("year", y).Set("group", items[0].묶음)
@@ -217,131 +206,6 @@ namespace PaymentAlert
                     .Set("from", 이름(e.이전단계)).Set("to", 이름(e.이후단계)));
             }
             return new JObj().Set("rows", rows);
-        }
-
-        // ══ 부가세 납부서 판독 ═══════════════════════════════════ ADR-0012
-
-        /// <summary>
-        /// PDF 를 받아 판독하고 반영할 항목과 금액을 **제안만** 한다. 저장은 화면에서 확인한 뒤 /api/amount 로 한다.
-        /// 세목 합계와 문서상 '계' 가 다르면 제안하지 않는다 (AC-W17, W36).
-        /// </summary>
-        JObj ImportVat(Env env, HttpListenerRequest req)
-        {
-            if (req.ContentLength64 <= 0) throw new HttpError(400, "빈 파일입니다.");
-            if (req.ContentLength64 > 판독최대) throw new HttpError(413, "20MB 보다 큰 파일은 판독하지 않습니다.");
-
-            string tmpDir = Path.Combine(Path.GetTempPath(), "PaymentAlert-import", Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(tmpDir);
-            try
-            {
-                string pdf = Path.Combine(tmpDir, "notice.pdf");
-                using (FileStream fs = System.IO.File.Create(pdf))
-                {
-                    var buf = new byte[81920];
-                    long total = 0;
-                    int n;
-                    while ((n = req.InputStream.Read(buf, 0, buf.Length)) > 0)
-                    {
-                        total += n;
-                        if (total > 판독최대) throw new HttpError(413, "20MB 보다 큰 파일은 판독하지 않습니다.");
-                        fs.Write(buf, 0, n);
-                    }
-                }
-
-                Dictionary<string, string> r = 판독결과읽기((판독기 ?? 기본판독)(pdf));
-                string ok;
-                if (!r.TryGetValue("ok", out ok))
-                    throw new HttpError(502, "판독 도구가 결과를 내지 않았습니다.");
-
-                var res = new JObj();
-                foreach (string k in new string[] { "due", "vat", "edu", "farm", "surcharge", "sum", "total" })
-                {
-                    string v;
-                    if (!r.TryGetValue(k, out v)) continue;
-                    decimal d;
-                    if (k != "due" && decimal.TryParse(v, NumberStyles.Number, Inv, out d)) res.Set(k, d);
-                    else res.Set(k, v);
-                }
-
-                if (ok != "true")
-                {
-                    string msg;
-                    r.TryGetValue("message", out msg);
-                    return res.Set("ok", false).Set("message", string.IsNullOrEmpty(msg) ? "판독하지 못했습니다." : msg);
-                }
-
-                DateTime due;
-                decimal amount;
-                if (!DateTime.TryParseExact(r["due"], "yyyy-MM-dd", Inv, DateTimeStyles.None, out due) ||
-                    !r.ContainsKey("total") || !decimal.TryParse(r["total"], NumberStyles.Number, Inv, out amount))
-                    throw new HttpError(502, "판독 결과 형식이 올바르지 않습니다.");
-
-                // 부가세 항목 중 원기한 월이 납부기한 월과 같은 건 (기존 도구와 같은 규칙)
-                var cands = env.Master.FindAll(delegate(PaymentItem x) { return x.비용명.Contains("부가") && x.월 == due.Month; });
-                if (cands.Count != 1)
-                {
-                    var names = new List<string>();
-                    foreach (PaymentItem c in cands) names.Add(c.비용명 + " (" + c.Id + ")");
-                    return res.Set("ok", false).Set("candidates", names).Set("message", cands.Count == 0
-                        ? string.Format("납부기한 {0}월에 해당하는 부가세 항목이 없습니다. 금액을 직접 입력하세요.", due.Month)
-                        : "해당하는 부가세 항목이 여러 개입니다. 금액을 직접 입력하세요.");
-                }
-
-                PaymentItem item = cands[0];
-                AmountRecord existing;
-                env.Amounts.TryGetValue(due.Year + "\t" + item.Id, out existing);
-                return res.Set("ok", true)
-                    .Set("year", due.Year).Set("id", item.Id).Set("name", item.비용명).Set("org", item.기관)
-                    .Set("amount", amount)
-                    .Set("existing", existing != null ? (object)existing.금액 : null);
-            }
-            finally
-            {
-                try { Directory.Delete(tmpDir, true); } catch { }
-            }
-        }
-
-        /// <summary>tools\import-notice.ps1 -Result 를 별도 프로세스로. 한도를 넘기면 끊는다.</summary>
-        string 기본판독(string pdf)
-        {
-            string baseDir = string.IsNullOrEmpty(BaseDir) ? AppDomain.CurrentDomain.BaseDirectory : BaseDir;
-            string script = Path.Combine(baseDir, "tools", "import-notice.ps1");
-            if (!System.IO.File.Exists(script)) throw new HttpError(500, "판독 도구가 없습니다: " + script);
-
-            var psi = new ProcessStartInfo("powershell.exe",
-                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + "\" -Pdf \"" + pdf + "\" -Result");
-            psi.UseShellExecute = false;
-            psi.CreateNoWindow = true;
-            psi.RedirectStandardOutput = true;
-            psi.RedirectStandardError = true;
-            psi.StandardOutputEncoding = Encoding.UTF8;
-
-            using (Process p = Process.Start(psi))
-            {
-                var outTask = p.StandardOutput.ReadToEndAsync();
-                var errTask = p.StandardError.ReadToEndAsync();
-                if (!p.WaitForExit(판독제한초 * 1000))
-                {
-                    try { p.Kill(); } catch { }
-                    throw new HttpError(504, string.Format("판독이 {0}초 안에 끝나지 않아 멈췄습니다. 금액을 직접 입력하세요.", 판독제한초));
-                }
-                string output = outTask.Result;
-                if (output.Trim().Length == 0 && Log != null) Log("판독 도구 오류 출력: " + errTask.Result);
-                return output;
-            }
-        }
-
-        static Dictionary<string, string> 판독결과읽기(string text)
-        {
-            var map = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (string raw in (text ?? "").Split('\n'))
-            {
-                string line = raw.TrimEnd('\r');
-                int tab = line.IndexOf('\t');
-                if (tab <= 0) continue;
-                map[line.Substring(0, tab).Trim()] = line.Substring(tab + 1).Trim();
-            }
-            return map;
         }
     }
 }

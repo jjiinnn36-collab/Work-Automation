@@ -30,7 +30,7 @@ export function YearPage() {
   const remaining = sortRemaining(data.remaining.filter((o) => matchYearFilter(o, filter, data.today)))
   const finished = data.finished.filter((o) => matchYearFilter(o, filter, data.today))
   const all = [...data.remaining, ...data.finished]
-  const unknown = all.filter((o) => o.amount === null && o.paid)
+  const unknown = all.filter((o) => o.amount === null && o.paid && !o.beforeStart)
   const inProg = data.remaining.filter((o) => yearStatus(o, data.today) === "progress")
   const upcoming = sortRemaining(data.remaining.filter((o) => yearStatus(o, data.today) === "upcoming"))
   const setF = (patch: Partial<YearFilter>) => setFilter((f) => ({ ...f, ...patch }))
@@ -45,7 +45,7 @@ export function YearPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title={`${y}년`}
-        description={`전체 ${data.count}건${data.startDate ? ` · 추적 시작일 ${data.startDate} 이전 건은 빠집니다` : ""}`}
+        description={`전체 ${data.count}건${data.beforeStart > 0 ? ` · 추적 시작일 ${data.startDate} 이전 ${data.beforeStart}건은 지난 건에 흐리게` : ""}`}
         actions={
           <>
             <ButtonGroup>
@@ -72,7 +72,7 @@ export function YearPage() {
         <StatCard label="지난 건" value={data.past} hint={`완료 ${data.pastDone} · 지남 ${data.past - data.pastDone}`} />
         <StatCard label="진행중" value={data.inProgress} hint={inProg.map((o) => o.name).join(" · ") || "없음"} />
         <StatCard label="진행예정" value={data.upcoming} hint={upcoming[0] ? `가장 이른 건 ${upcoming[0].due.slice(5)}` : "없음"} />
-        <StatCard label="기한 지남" value={data.overdue} tone="danger" hint={data.overdue > 0 ? "맨 위에 고정해 보여 줍니다" : "없음"} />
+        <StatCard label="기한 지남" value={data.overdue} tone="danger" hint={data.overdue > 0 ? "남은 건 맨 위에 고정" : "없음"} />
         <StatCard label="금액 미확인" value={data.amountUnknown} tone="action" hint={unknown.slice(0, 3).map((o) => o.name).join(" · ") || "없음"} />
       </div>
 
@@ -93,6 +93,7 @@ export function YearPage() {
           <NativeSelectOption value="upcoming">진행예정</NativeSelectOption>
           <NativeSelectOption value="overdue">기한 지남</NativeSelectOption>
           <NativeSelectOption value="done">완료</NativeSelectOption>
+          <NativeSelectOption value="before">추적 시작 전</NativeSelectOption>
         </NativeSelect>
         <InputGroup className="w-full sm:w-64">
           <InputGroupAddon><SearchIcon /></InputGroupAddon>
@@ -118,9 +119,9 @@ export function YearPage() {
 
       <section className="flex flex-col gap-3">
         <h3 className="flex items-baseline gap-2 text-base font-semibold">
-          끝난 건 <span className="text-sm font-normal text-muted-foreground">{finished.length}건 · 최근 것이 위로</span>
+          지난 건 <span className="text-sm font-normal text-muted-foreground">{finished.length}건 · 끝난 건과 추적 시작 전 건 · 최근 것이 위로</span>
         </h3>
-        <OccurrenceTable rows={finished} empty="끝난 건이 없습니다" />
+        <OccurrenceTable rows={finished} empty="지난 건이 없습니다" />
       </section>
     </div>
   )

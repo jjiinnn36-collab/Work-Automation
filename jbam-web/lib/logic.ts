@@ -45,16 +45,18 @@ export function stepTooltip(names: string[], i: number, state: StepState): strin
   return `${i + 1}/${names.length} ${names[i]} · ${word}`
 }
 
-export type YearStatus = "done" | "overdue" | "progress" | "upcoming"
+export type YearStatus = "done" | "overdue" | "progress" | "upcoming" | "before"
 
 /**
- * 연간 화면 상태 분류.
- * 진행중 = 알림일이 지난 미완료, 진행예정 = 아직 알림일 전, 기한 지남 = 기한이 지난 미완료.
+ * 이번 달·연간 공통 상태 분류 (사용자 결정 Q3, ADR-0014 — 서버 집계와 같은 규칙).
+ * 기한 지남 = 기한이 지난 미완료, 진행중 = 한 단계라도 밟은 미완료, 진행예정 = 아직 아무 단계도 안 밟은 미완료,
+ * 시작 전 = 추적 시작일 이전 건(할 일 아님).
  */
-export function yearStatus(o: Occurrence, today: string): YearStatus {
+export function yearStatus(o: Occurrence, _today?: string): YearStatus {
   if (o.done) return "done"
+  if (o.beforeStart) return "before"
   if (o.severity === "overdue") return "overdue"
-  return o.alertDate <= today ? "progress" : "upcoming"
+  return o.stage >= 1 ? "progress" : "upcoming"
 }
 
 /** 남은 건 정렬: 기한 지난 미완료가 맨 위 (AC-W55), 그다음 기한 오름차순. */

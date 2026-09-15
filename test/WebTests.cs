@@ -133,7 +133,7 @@ namespace PaymentAlert.Tests
                 db.SetStartDate(new DateTime(2026, 9, 1));
 
                 var a = new AmountRecord();
-                a.연도 = 2026; a.Id = "kofia-09"; a.금액 = 5838089m; a.출처 = "고지서"; a.확인일 = new DateTime(2026, 9, 10);
+                a.연도 = 2026; a.Id = "kofia-09"; a.금액 = 1234560m; a.출처 = "고지서"; a.확인일 = new DateTime(2026, 9, 10);
                 db.UpsertAmounts(new AmountRecord[] { a });
 
                 var h = new Holidays.Cache();
@@ -186,7 +186,7 @@ namespace PaymentAlert.Tests
                 설정과관리(server);
                 분할납부();
                 문서와순서와기록(server);
-                납부서판독(server);
+                느린요청중병렬응답(server);
             }
             catch (Exception ex)
             {
@@ -269,7 +269,7 @@ namespace PaymentAlert.Tests
             Has("협회회비 표시", r.Text, "\"id\":\"kofia-09\"");
             Has("D-2영업일 (9/20 일요일 → 9/21)", r.Text, "\"statusText\":\"D-2영업일\"");
             Has("보정 기한", r.Text, "\"payDue\":\"2026-09-21\"");
-            Has("금액 문구", r.Text, "\"amountText\":\"5,838,089원\"");
+            Has("금액 문구", r.Text, "\"amountText\":\"1,234,560원\"");
             Has("다음 지점", r.Text, "\"nextStage\":\"전표발행\"");
             Has("다음 행동 (AC-W50)", r.Text, "\"nextAction\":\"전표 발행\"");
             Has("남은 건수 1", r.Text, "\"pending\":1");
@@ -311,8 +311,10 @@ namespace PaymentAlert.Tests
             Res r = Get("/api/year?y=2026");
             Check("연간 200", r.Status, 200);
             Has("전체 3건", r.Text, "\"count\":3");
-            Has("진행중 1", r.Text, "\"inProgress\":1");
-            Has("진행예정 2", r.Text, "\"upcoming\":2");
+            // 진행중 = 한 단계라도 밟은 건, 진행예정 = 아직 안 밟은 건 (Q3, ADR-0014). 알림일과 무관하다.
+            Has("진행중 0 (아직 아무것도 진행 안 함)", r.Text, "\"inProgress\":0");
+            Has("진행예정 3", r.Text, "\"upcoming\":3");
+            Has("시작일 이전 건 0 (2026-09-01 이후만 있음)", r.Text, "\"beforeStart\":0");
             Has("금액 미확인 1 (부가세)", r.Text, "\"amountUnknown\":1");
             Has("기관 목록", r.Text, "\"orgs\":[");
             Has("고정금액 반영", r.Text, "\"amountText\":\"100,000원\"");
@@ -322,9 +324,43 @@ namespace PaymentAlert.Tests
             Has("10월 합계는 고정금액만", r.Text, "\"total\":100000");
             Has("10월 미확인 1", r.Text, "\"amountUnknown\":1");
             Has("10월 말일 → 11/2", r.Text, "\"payDue\":\"2026-11-02\"");
-            Has("10월 진행중 2", r.Text, "\"inProgress\":2");
+            Has("10월 진행예정 2", r.Text, "\"upcoming\":2");
+            Has("이번 달도 같은 낱말 — 진행중 0", r.Text, "\"inProgress\":0");
 
-            Check("시작일 이전 해는 비어 있음", Get("/api/year?y=2025").Text.Contains("\"count\":0"), true);
+            // 추적 시작일 이전 건은 '지난 건' 에 흐리게 남긴다 (Q1, ADR-0014). 집계에는 넣지 않는다.
+            r = Get("/api/year?y=2025");
+            Has("2025년 집계 0건", r.Text, "\"count\":0");
+            Has("시작일 이전 3건", r.Text, "\"beforeStart\":3");
+            Has("지난 건 목록에 들어감", r.Text, "\"finished\":[{");
+            Has("상태 문구", r.Text, "\"statusText\":\"추적 시작 전\"");
+            Has("할 일로 보이지 않는 표시", r.Text, "\"severity\":\"before\"");
+            Has("시작 전 표시", r.Text, "\"beforeStart\":true");
+            Has("남은 건에는 없음", r.Text, "\"remaining\":[]");
+            Has("기한 지남으로 세지 않음", r.Text, "\"overdue\":0");
+            Has("금액 미확인으로도 세지 않음", r.Text, "\"amountUnknown\":0");
+
+            r = Get("/api/month?ym=2025-10");
+            Has("지난달 목록에도 흐리게", r.Text, "\"beforeStart\":2");
+            Has("합계에 넣지 않음", r.Text, "\"total\":0");
+        }
+
+        static void 느린요청중병렬응답(WebServer server)
+        {
+            Console.WriteLine("\n[WEB-16] 느린 요청이 도는 동안에도 다른 요청은 바로 응답 (ADR-0012)");
+            string saved;
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+                saved = db.LoadAttachments().Find(delegate(Attachment a) { return a.Id == "vat-q3"; }).저장파일;
+            server.파일열기 = delegate(string p) { System.Threading.Thread.Sleep(3000); };
+            Res slow = null;
+            var t = new System.Threading.Thread(delegate() { slow = Post("/api/open", "y=2026&id=vat-q3&f=" + E(saved)); });
+            t.Start();
+            System.Threading.Thread.Sleep(500);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Res health = Get("/api/health");
+            CheckTrue("다른 요청 1초 안에 응답", health.Status == 200 && sw.ElapsedMilliseconds < 1000);
+            t.Join(15000);
+            Check("느린 요청도 끝까지 처리", slow != null ? slow.Status : -1, 200);
+            Check("판독 기능은 없어짐 (Q8)", Send("POST", "/api/import/vat", new byte[] { 1 }, "application/pdf", 표시()).Status, 404);
         }
 
         static void 단계바꾸기()
@@ -435,7 +471,7 @@ namespace PaymentAlert.Tests
             Check("200", r.Status, 200);
             Has("끝낸 협회회비", r.Text, "\"id\":\"kofia-09\"");
             Has("처리일은 누른 날", r.Text, "\"doneAt\":\"" + today + "\"");
-            Has("합계", r.Text, "\"total\":5838089");
+            Has("합계", r.Text, "\"total\":1234560");
             Lacks("진행중인 건은 없음", r.Text, "\"id\":\"vat-q3\"");
             Check("끝이 시작보다 빠르면 400", Get("/api/history?from=2026-12-01&to=2026-01-01").Status, 400);
             Check("날짜 형식 400", Get("/api/history?from=2026/01/01").Status, 400);
@@ -692,62 +728,5 @@ namespace PaymentAlert.Tests
             Has("설정 변경도 보임", r.Text, "\"name\":\"설정\"");
         }
 
-        static void 납부서판독(WebServer server)
-        {
-            Console.WriteLine("\n[WEB-16] 부가세 납부서 판독 → 반영 제안, 검산 불일치·후보 없음, 느린 판독에도 서버는 응답 (AC-W17·W18·W36)");
-            byte[] pdf = Encoding.UTF8.GetBytes("%PDF-1.4 fake");
-            var h = 표시();
-
-            server.판독기 = delegate(string path) { return "ok\ttrue\ndue\t2026-10-26\nvat\t1200000\nedu\t0\nfarm\t0\nsurcharge\t0\nsum\t1200000\ntotal\t1200000\n"; };
-            Res r = Send("POST", "/api/import/vat", pdf, "application/pdf", h);
-            Check("판독 200", r.Status, 200);
-            Has("반영 제안", r.Text, "\"ok\":true");
-            Has("10월 부가세 항목", r.Text, "\"id\":\"vat-q3\"");
-            Has("금액", r.Text, "\"amount\":1200000");
-            Has("해당 연도", r.Text, "\"year\":2026");
-
-            server.판독기 = delegate(string path) { return "ok\tfalse\ncode\t6\nmessage\t세목 합계와 문서상 '계' 가 일치하지 않아 반영하지 않습니다.\nsum\t100\ntotal\t101\n"; };
-            r = Send("POST", "/api/import/vat", pdf, "application/pdf", h);
-            Has("검산 불일치는 제안하지 않음", r.Text, "\"ok\":false");
-            Has("이유", r.Text, "일치하지 않아");
-            Has("대조 숫자", r.Text, "\"total\":101");
-
-            server.판독기 = delegate(string path) { return "ok\ttrue\ndue\t2026-03-25\ntotal\t500\nsum\t500\n"; };
-            r = Send("POST", "/api/import/vat", pdf, "application/pdf", h);
-            Has("해당 월 부가세가 없으면 제안하지 않음", r.Text, "해당하는 부가세 항목이 없습니다");
-
-            server.판독기 = delegate(string path) { return "아무 말"; };
-            Check("결과 없는 도구 502", Send("POST", "/api/import/vat", pdf, "application/pdf", h).Status, 502);
-            Check("빈 파일 400", Send("POST", "/api/import/vat", new byte[0], "application/pdf", h).Status, 400);
-            Check("표시 없는 판독 403", Send("POST", "/api/import/vat", pdf, "application/pdf", null).Status, 403);
-
-            // 실제 프로세스 경로: 느린 도구는 한도에서 끊고, 그동안 다른 요청은 응답한다.
-            string fakeBase = Path.Combine(Path.GetTempPath(), "pa_fake_tools_" + Guid.NewGuid().ToString("N").Substring(0, 6));
-            Directory.CreateDirectory(Path.Combine(fakeBase, "tools"));
-            File.WriteAllText(Path.Combine(fakeBase, "tools", "import-notice.ps1"), "param($Pdf,[switch]$Result)\r\nStart-Sleep -Seconds 20\r\n", new UTF8Encoding(true));
-            string oldBase = server.BaseDir;
-            server.BaseDir = fakeBase;
-            server.판독기 = null;
-            server.판독제한초 = 3;
-            try
-            {
-                Res slow = null;
-                var t = new System.Threading.Thread(delegate() { slow = Send("POST", "/api/import/vat", pdf, "application/pdf", 표시()); });
-                var sw = System.Diagnostics.Stopwatch.StartNew();
-                t.Start();
-                System.Threading.Thread.Sleep(700);
-                var sw2 = System.Diagnostics.Stopwatch.StartNew();
-                Res health = Get("/api/health");
-                CheckTrue("판독 중에도 다른 요청은 바로 응답 (1초 이내)", health.Status == 200 && sw2.ElapsedMilliseconds < 1000);
-                t.Join(30000);
-                Check("한도 넘기면 504", slow != null ? slow.Status : -1, 504);
-                CheckTrue("한도 근처에서 끊음 (15초 안)", sw.ElapsedMilliseconds < 15000);
-            }
-            finally
-            {
-                server.BaseDir = oldBase;
-                try { Directory.Delete(fakeBase, true); } catch { }
-            }
-        }
     }
 }

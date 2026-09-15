@@ -9,7 +9,7 @@ namespace PaymentAlert
     ///
     /// 자료 폴더 — DB, 증빙, 실행 기록, 공휴일 API 키. 실행 파일 옆 data-folder.txt 에
     ///            경로를 적으면 그곳을 쓰고, 없으면 실행 파일 옆 data 폴더를 쓴다.
-    /// 가져오기 원천 — 실행 파일 옆 data 폴더의 TSV. 엑셀 변환·납부서 판독 도구가 여기에 쓴다.
+    /// 가져오기 원천 — 실행 파일 옆 data 폴더. 옛 판 TSV 자료와 함께 배포하는 공휴일(holidays.tsv)이 있다.
     ///                자료 폴더를 옮겨도 도구가 쓰는 곳은 그대로라 둘을 따로 둔다.
     /// </summary>
     public static class DataPaths
