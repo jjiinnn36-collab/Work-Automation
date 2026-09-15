@@ -86,6 +86,7 @@ namespace PaymentAlert.Tests
                 단계변경은원자적();
                 두창이동시에누름();
                 순서옮기기();
+                자료준비();
             }
             catch (Exception ex)
             {
@@ -495,7 +496,7 @@ namespace PaymentAlert.Tests
 
         static void 다시가져오기()
         {
-            Console.WriteLine("\n[DB-13] 엑셀·납부서 도구 뒤 다시 가져오기");
+            Console.WriteLine("\n[DB-13] 납부서 판독 도구 뒤 금액 다시 가져오기");
             string baseDir = 임시폴더("reimport");
             try
             {
@@ -512,34 +513,58 @@ namespace PaymentAlert.Tests
                     s.UpsertAmounts(new AmountRecord[] { 금액(2026, "web-only", 7777m, "웹", "") });
                 }
 
-                TSV쓰기(Path.Combine(src, "payment-master.tsv"),
-                    "id\t기관\t비용명\t진행흐름\t월\t일\t알림영업일\t금액규칙\t고정금액\t비고\r\n" +
-                    "new\t기관\t새 항목\t제출만\t6\t30\t3\t해당없음\t\t\r\n");
                 TSV쓰기(Path.Combine(src, "amounts.tsv"),
-                    "연도\tid\t금액\t출처\t확인일\t비고\r\n2026\tnew\t123\t고지서\t2026-06-01\t\r\n");
+                    "연도\tid\t금액\t출처\t확인일\t비고\r\n2026\told\t123\t고지서\t2026-06-01\t\r\n");
 
                 var log = new List<string>();
-                Check("항목 가져오기 성공", Importer.항목다시가져오기(baseDir, dataDir, log), 0);
                 Check("금액 가져오기 성공", Importer.금액다시가져오기(baseDir, dataDir, log), 0);
 
                 using (Store s = Store.Open(DataPaths.Db(dataDir)))
                 {
-                    var m = s.LoadMaster();
-                    Check("항목은 엑셀 기준으로 교체", m.Count, 1);
-                    Check("새 항목", m[0].Id, "new");
+                    Check("항목은 그대로", s.LoadMaster().Count, 1);
                     Check("진행 기록은 건드리지 않음", s.LoadStatus()["2026\told"].단계, 2);
                     var am = s.LoadAmounts();
                     CheckTrue("웹에서 넣은 금액 유지", am.ContainsKey("2026\tweb-only"));
-                    Check("가져온 금액 추가", am["2026\tnew"].금액, 123m);
+                    Check("가져온 금액 추가", am["2026\told"].금액, 123m);
                 }
 
-                // 항목 파일이 비면 기존 항목을 지우지 않는다
-                TSV쓰기(Path.Combine(src, "payment-master.tsv"), "id\t기관\t비용명\t진행흐름\t월\t일\r\n");
-                CheckTrue("빈 항목 파일은 거부", Importer.항목다시가져오기(baseDir, dataDir, new List<string>()) != 0);
-                using (Store s = Store.Open(DataPaths.Db(dataDir)))
-                    Check("기존 항목 보존", s.LoadMaster().Count, 1);
+                File.Delete(Path.Combine(src, "amounts.tsv"));
+                CheckTrue("금액 파일이 없으면 실패 코드", Importer.금액다시가져오기(baseDir, dataDir, new List<string>()) != 0);
             }
             finally { 치우기(baseDir); }
+        }
+
+        static void 자료준비()
+        {
+            Console.WriteLine("\n[DB-19] 처음 실행: 옛 TSV 가 없으면 빈 DB 와 공휴일만 (ADR-0013)");
+            string baseDir = 임시폴더("fresh");
+            string base2 = 임시폴더("fresh-tsv");
+            try
+            {
+                string src = Path.Combine(baseDir, "data");
+                Directory.CreateDirectory(src);
+                TSV쓰기(Path.Combine(src, "holidays.tsv"), "날짜\t명칭\r\n2026-10-09\t한글날\r\n2026-12-25\t성탄절\r\n");
+                var log = new List<string>();
+                Check("DB 가 없고 TSV 도 없으면 새로 만듦", Importer.자료준비(baseDir, src, log), Importer.준비결과.새로만듦);
+                using (Store s = Store.Open(DataPaths.Db(src)))
+                {
+                    Check("항목 0건", s.LoadMaster().Count, 0);
+                    Check("공휴일은 들어감", s.LoadHolidays().Dates.Count, 2);
+                    Check("최신 판", s.버전, Store.스키마버전);
+                }
+                CheckTrue("안내 문구", log.Exists(delegate(string l) { return l.Contains("항목 관리"); }));
+                Check("두 번째는 이미 있음", Importer.자료준비(baseDir, src, new List<string>()), Importer.준비결과.이미있음);
+
+                string src2 = Path.Combine(base2, "data");
+                Directory.CreateDirectory(src2);
+                TSV쓰기(Path.Combine(src2, "payment-master.tsv"),
+                    "id\t기관\t비용명\t진행흐름\t월\t일\t알림영업일\t금액규칙\t고정금액\t비고\r\n" +
+                    "a\t기관\t항목\t납부만\t6\t30\t3\t고지수령\t\t\r\n");
+                Check("옛 TSV 가 있으면 옮김", Importer.자료준비(base2, src2, new List<string>()), Importer.준비결과.TSV옮김);
+                using (Store s = Store.Open(DataPaths.Db(src2)))
+                    Check("옮긴 항목의 규칙은 변동", s.LoadMaster()[0].금액규칙, "변동");
+            }
+            finally { 치우기(baseDir); 치우기(base2); }
         }
 
         static void 항목하나씩()

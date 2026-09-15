@@ -132,26 +132,37 @@ namespace PaymentAlert
             return n;
         }
 
+        public enum 준비결과 { 이미있음, TSV옮김, 새로만듦 }
+
         /// <summary>
-        /// 엑셀 변환 뒤 항목을 다시 가져온다. 엑셀이 항목의 원본이므로 전체를 바꾼다.
-        /// 진행 기록과 금액은 건드리지 않는다.
+        /// 실행할 때마다 먼저 부른다. DB 가 있으면 아무것도 하지 않는다.
+        /// 옛 TSV(payment-master.tsv)가 있으면 한 번 옮기고, 없으면 빈 DB 를 만든 뒤
+        /// 함께 배포하는 공휴일 자료(data\holidays.tsv)만 넣는다. 항목은 웹에서 넣는다 (ADR-0013).
         /// </summary>
-        public static int 항목다시가져오기(string baseDir, string dataDir, List<string> log)
+        public static 준비결과 자료준비(string baseDir, string dataDir, List<string> log)
         {
-            string path = Path.Combine(DataPaths.가져오기폴더(baseDir), "payment-master.tsv");
-            var warnings = new List<string>();
-            List<PaymentItem> master;
-            try { master = Repository.LoadMaster(path, warnings); }
-            catch (FileNotFoundException) { log.Add("항목 파일이 없거나 비어 있습니다: " + path); return 2; }
+            string db = DataPaths.Db(dataDir);
+            if (File.Exists(db)) return 준비결과.이미있음;
 
-            if (master.Count == 0) { log.Add("가져올 유효한 항목이 없습니다. 기존 자료를 그대로 둡니다."); return 2; }
+            string src = DataPaths.가져오기폴더(baseDir);
+            if (File.Exists(Path.Combine(src, "payment-master.tsv")))
+            {
+                최초이전(baseDir, dataDir, log);
+                return 준비결과.TSV옮김;
+            }
 
-            using (Store s = Store.Open(DataPaths.Db(dataDir)))
-                s.ReplaceMaster(master);
-
-            log.Add(string.Format("항목 {0}건을 가져왔습니다.", master.Count));
-            foreach (string w in warnings) log.Add("  확인: " + w);
-            return 0;
+            using (Store s = Store.Open(db))
+            {
+                string hol = Path.Combine(src, "holidays.tsv");
+                if (File.Exists(hol))
+                {
+                    Holidays.Cache cache = Holidays.Load(hol);
+                    s.SaveHolidays(cache);
+                    log.Add(string.Format("공휴일 {0}건을 넣었습니다.", cache.Dates.Count));
+                }
+            }
+            log.Add("빈 자료 DB 를 만들었습니다. 웹 화면 '항목 관리' 에서 항목을 추가하세요.");
+            return 준비결과.새로만듦;
         }
 
         /// <summary>납부서 판독 뒤 금액을 가져온다. 합치기만 하고 지우지 않는다.</summary>

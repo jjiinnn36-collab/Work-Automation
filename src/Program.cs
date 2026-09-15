@@ -26,7 +26,7 @@ namespace PaymentAlert
             bool 보드 = false;          // --board : 당월 기한 상시 보드
             bool 웹 = false;            // --web : 내 PC 전용 웹 화면 서버
             bool 브라우저열기 = true;   // --no-browser : 웹 서버만 띄우고 창은 열지 않는다
-            string 가져오기 = null;     // --import-master / --import-amounts : 도구가 쓴 TSV 를 DB 로
+            string 가져오기 = null;     // --import-amounts : 납부서 판독 도구(import-notice.bat)가 쓴 금액 TSV 를 DB 로
             DateTime today = DateTime.Today;
             DateTime? 보드기준일 = null;   // --date 를 보드에도 적용해 다른 달을 볼 수 있게 한다
 
@@ -36,7 +36,7 @@ namespace PaymentAlert
                 else if (a == "--board") 보드 = true;
                 else if (a == "--web") 웹 = true;
                 else if (a == "--no-browser") 브라우저열기 = false;
-                else if (a == "--import-master" || a == "--import-amounts") 가져오기 = a;
+                else if (a == "--import-amounts") 가져오기 = a;
                 else if (a.StartsWith("--date="))
                 {
                     // 테스트용. 특정 날짜로 실행한다.
@@ -88,24 +88,19 @@ namespace PaymentAlert
         }
 
         /// <summary>
-        /// 자료 DB 가 없으면 기존 TSV 자료를 한 번 옮긴다.
-        /// 옮길 자료조차 없으면 사용자에게 보여줄 문구를 돌려준다. 준비되면 null.
+        /// 자료 DB 를 준비한다. 옛 TSV 가 있으면 한 번 옮기고, 없으면 빈 DB 를 만든다 (ADR-0013).
+        /// 항목은 웹 '항목 관리' 에서 넣는다. 준비되면 null.
         /// </summary>
         static string EnsureDb()
         {
-            string db = DataPaths.Db(DataDir);
-            if (File.Exists(db)) return null;
-
-            string master = Path.Combine(DataPaths.가져오기폴더(BaseDir), "payment-master.tsv");
-            if (!File.Exists(master))
-                return "납부 자료가 없습니다.\r\n\r\n" + master +
-                       "\r\n\r\ndata/payment-master.sample.tsv 를 복사해서 만들어 주세요.";
-
-            Log("자료 DB 가 없어 TSV 자료를 옮깁니다. 자료 폴더: " + DataDir);
             var log = new List<string>();
-            Importer.최초이전(BaseDir, DataDir, log);
-            foreach (string l in log) Log("  " + l);
-            Log("옮기기 완료: " + db);
+            Importer.준비결과 r = Importer.자료준비(BaseDir, DataDir, log);
+            if (r != Importer.준비결과.이미있음)
+            {
+                Log(r == Importer.준비결과.TSV옮김 ? "자료 DB 가 없어 TSV 자료를 옮겼습니다. 자료 폴더: " + DataDir
+                                                  : "자료 DB 를 새로 만들었습니다. 자료 폴더: " + DataDir);
+                foreach (string l in log) Log("  " + l);
+            }
             return null;
         }
 
@@ -113,17 +108,9 @@ namespace PaymentAlert
         {
             try
             {
-                string 준비실패 = EnsureDb();
-                if (준비실패 != null)
-                {
-                    Log(준비실패.Replace("\r\n", " "));
-                    return 2;
-                }
-
+                EnsureDb();
                 var log = new List<string>();
-                int rc = 종류 == "--import-master"
-                    ? Importer.항목다시가져오기(BaseDir, DataDir, log)
-                    : Importer.금액다시가져오기(BaseDir, DataDir, log);
+                int rc = Importer.금액다시가져오기(BaseDir, DataDir, log);
                 foreach (string l in log) Log(l);
                 return rc;
             }
@@ -237,7 +224,7 @@ namespace PaymentAlert
                 List<PaymentItem> master = db.LoadMaster();
                 if (master.Count == 0)
                 {
-                    MessageBox.Show("납부 항목이 없습니다.\r\n\r\nconvert-excel.bat 으로 엑셀 양식을 가져와 주세요.",
+                    MessageBox.Show("납부 항목이 없습니다.\r\n\r\nstart-web.bat 으로 웹 화면을 열고 '항목 관리' 에서 항목을 추가하세요.",
                         "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return 2;
                 }
@@ -288,7 +275,8 @@ namespace PaymentAlert
                 }
 
                 // ── 경고 문구 조립 ───────────────────────────────────
-                string warningText = BuildWarning(db, cache, years);
+                List<string> 경고들 = Warnings.Build(cache, years, today);
+                string warningText = 경고들.Count == 0 ? null : string.Join("\r\n", 경고들.ToArray());
 
                 var store = new AttachmentStore(db, DataPaths.증빙(DataDir));
                 try { store.Load(); }
@@ -315,32 +303,6 @@ namespace PaymentAlert
                     today.ToString("yyyy-MM-dd"), rows.Count, set.Overdue.Count));
                 return 0;
             }
-        }
-
-        static string BuildWarning(Store db, Holidays.Cache cache, List<int> years)
-        {
-            var parts = new List<string>();
-
-            // 엑셀 양식을 고치고 가져오기를 잊으면 프로그램은 옛 자료로 계속 돈다.
-            // 알아채기 어려운 실패라 반드시 눈에 띄게 알린다.
-            string templatePath = Path.Combine(DataPaths.가져오기폴더(BaseDir), "payment-master-template.xlsx");
-            string 기록 = db.GetMeta("master_updated_at");
-            DateTime 가져온시각;
-            if (File.Exists(templatePath) && 기록 != null &&
-                DateTime.TryParse(기록, CultureInfo.InvariantCulture, DateTimeStyles.None, out 가져온시각))
-            {
-                DateTime x = File.GetLastWriteTime(templatePath);
-                if (x > 가져온시각)
-                {
-                    parts.Add(string.Format(
-                        "엑셀 양식이 가져온 항목보다 최신입니다 (양식 {0}, 가져옴 {1}). " +
-                        "엑셀에서 고친 내용이 아직 반영되지 않았습니다. convert-excel.bat 을 실행하세요.",
-                        x.ToString("MM-dd HH:mm"), 가져온시각.ToString("MM-dd HH:mm")));
-                }
-            }
-
-            parts.AddRange(Warnings.Build(cache, years, DateTime.Today));
-            return parts.Count == 0 ? null : string.Join("\r\n", parts.ToArray());
         }
 
         /// <summary>하루 첫 실행에 DB 사본을 만든다 (ADR-0008). 실패해도 알림은 계속한다.</summary>
