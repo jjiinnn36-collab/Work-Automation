@@ -163,9 +163,9 @@ namespace PaymentAlert
             int 미확인 = 0;
             foreach (Occurrence o in month)
             {
-                if (o.실제금액 != null) 합계 += o.실제금액.금액;
-                else if (o.Item.고정금액.HasValue) 합계 += o.Item.고정금액.Value;
-                else if (o.Item.금액규칙 != "해당없음" && o.Item.금액규칙.Length > 0) 미확인++;
+                decimal? a = AmountRules.금액(o);
+                if (a.HasValue) 합계 += a.Value;
+                else if (AmountRules.미확인(o)) 미확인++;
             }
 
             string 합계문구;
@@ -350,25 +350,11 @@ namespace PaymentAlert
             //  - 납부가 없는 건(제출만 등)은 비워 둔다
             //  - 그 밖에는 '미확인'. 빈칸으로 두면 0원으로 오해할 수 있다.
             string 금액문구;
-            bool 금액확정 = false;
-            if (o.실제금액 != null)
-            {
-                금액문구 = string.Format("{0:N0}", o.실제금액.금액);
-                금액확정 = true;
-            }
-            else if (o.Item.고정금액.HasValue)
-            {
-                금액문구 = string.Format("{0:N0}", o.Item.고정금액.Value);
-                금액확정 = true;
-            }
-            else if (o.Item.금액규칙 == "해당없음" || o.Item.금액규칙.Length == 0)
-            {
-                금액문구 = "";
-            }
-            else
-            {
-                금액문구 = "미확인";
-            }
+            decimal? 확정금액 = AmountRules.금액(o);
+            bool 금액확정 = 확정금액.HasValue;
+            if (금액확정) 금액문구 = string.Format("{0:N0}", 확정금액.Value);
+            else if (!AmountRules.미확인(o)) 금액문구 = "";
+            else 금액문구 = "미확인";
 
             var 금액 = new Label();
             금액.Text = 금액문구;
@@ -385,7 +371,7 @@ namespace PaymentAlert
             string tip = string.Format("{0} ({1})\n기한 {2}\n{3}",
                 o.Item.비용명, o.Item.기관,
                 o.원기한일.ToString("yyyy-MM-dd (ddd)", ko) + "  → 실납부 " + o.보정기한일.ToString("MM-dd (ddd)", ko),
-                금액확정 ? 금액문구 + "원" : (금액문구.Length == 0 ? "납부 없음" : "금액 미확인 (" + o.Item.금액규칙 + ")"));
+                금액확정 ? 금액문구 + "원" : (금액문구.Length == 0 ? "납부 없음" : "금액 미확인"));
             var tt = new ToolTip();
             tt.SetToolTip(p, tip);
             tt.SetToolTip(이름, tip);
@@ -473,15 +459,15 @@ namespace PaymentAlert
                         MessageBoxDefaultButton.Button2) != DialogResult.Yes)
                     return;
 
-                st.단계 = 이전;
-                st.변경일시 = DateTime.Now;
-                st.변경됨 = true;
-
-                // 되돌렸으면 오늘 확인 표시도 지운다. 그래야 팝업이 다시 물어본다.
-                st.최종확인일 = null;
-
+                // 확인창을 띄운 사이 다른 창에서 바뀌었으면 DB 가 거절한다 (ADR-0004).
+                // 되돌리면 오늘 확인 표시도 지워져 팝업이 다시 물어본다.
                 using (Store db = Store.Open(DataPaths.Db(dataDir)))
-                    db.SaveStatus(new StatusRecord[] { st });
+                    db.Revert(o.연도, o.Item.Id, o.Item.진행흐름, st.단계, DateTime.Now, "보드");
+                Reload();
+            }
+            catch (StageConflictException ce)
+            {
+                MessageBox.Show(this, ce.Message, "되돌리기", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 Reload();
             }
             catch (Exception ex)

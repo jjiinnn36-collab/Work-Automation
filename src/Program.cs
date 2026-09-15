@@ -292,24 +292,24 @@ namespace PaymentAlert
                 catch (Exception ex) { Log("증빙 목록을 읽지 못했습니다: " + ex.Message); }
 
                 var form = new AlertForm(rows, set.Overdue, cal, today, warningText, store);
+
+                // 누를 때마다 바로 DB 에 쓴다 (ADR-0004). 창이 비정상 종료돼도 누른 것은 남고,
+                // 그사이 웹에서 같은 건을 바꿨으면 DB 가 거절해 두 번 진행되지 않는다.
+                string dbPath = DataPaths.Db(DataDir);
+                form.단계변경 = delegate(AlertRow row, string 동작)
+                {
+                    using (Store s = Store.Open(dbPath))
+                    {
+                        Occurrence o = row.Occ;
+                        if (동작 == "진행") return s.Advance(o.연도, o.Item.Id, o.Item.진행흐름, row.Status.단계, DateTime.Now, today, "팝업");
+                        if (동작 == "대기") return s.Defer(o.연도, o.Item.Id, row.Status.단계, DateTime.Now, today, "팝업");
+                        return s.Revert(o.연도, o.Item.Id, o.Item.진행흐름, row.Status.단계, DateTime.Now, "팝업");
+                    }
+                };
                 Application.Run(form);
 
-                // ── 저장 ─────────────────────────────────────────────
-                try
-                {
-                    db.SaveStatus(statusMap.Values);
-                    Log(string.Format("{0}: {1}건 표시, 저장 완료. (기한초과 미처리 {2}건)",
-                        today.ToString("yyyy-MM-dd"), rows.Count, set.Overdue.Count));
-                }
-                catch (Exception ex)
-                {
-                    Log("상태 저장 실패: " + ex);
-                    MessageBox.Show(
-                        "진행 상태를 저장하지 못했습니다.\r\n오늘 누른 내용이 기록되지 않았습니다.\r\n\r\n" + ex.Message,
-                        "납부 기한 알림 - 저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    return 3;
-                }
-
+                Log(string.Format("{0}: {1}건 표시. (기한초과 미처리 {2}건)",
+                    today.ToString("yyyy-MM-dd"), rows.Count, set.Overdue.Count));
                 return 0;
             }
         }

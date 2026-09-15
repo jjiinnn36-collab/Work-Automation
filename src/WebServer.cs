@@ -220,12 +220,12 @@ namespace PaymentAlert
             {
                 switch (path)
                 {
-                    case "/api/advance": Send(ctx.Response, 200, Advance(env, f)); return;
-                    case "/api/defer": Send(ctx.Response, 200, Defer(env, f)); return;
-                    case "/api/revert": Send(ctx.Response, 200, Revert(env, f)); return;
+                    case "/api/advance": Send(ctx.Response, 200, ChangeStage(env, f, "진행")); return;
+                    case "/api/defer": Send(ctx.Response, 200, ChangeStage(env, f, "대기")); return;
+                    case "/api/revert": Send(ctx.Response, 200, ChangeStage(env, f, "되돌리기")); return;
                     case "/api/amount": Send(ctx.Response, 200, SaveAmount(env, f)); return;
                     case "/api/amount/delete":
-                        env.Db.DeleteAmount(연도(f["y"]), 아이디(f["id"]));
+                        env.Db.DeleteAmount(연도(f["y"]), 아이디(f["id"]), 출처);
                         Send(ctx.Response, 200, new JObj().Set("ok", true));
                         return;
                     case "/api/item": Send(ctx.Response, 200, SaveItem(env, f)); return;
@@ -441,14 +441,14 @@ namespace PaymentAlert
             {
                 AmountRecord a;
                 decimal? 올해 = null;
-                bool 입력함 = env.Amounts.TryGetValue(env.Today.Year + "\t" + it.Id, out a);
-                if (입력함) 올해 = a.금액;
-                else if (it.고정금액.HasValue) 올해 = it.고정금액;
+                bool 입력함 = it.납부있음 && env.Amounts.TryGetValue(env.Today.Year + "\t" + it.Id, out a);
+                if (입력함) 올해 = env.Amounts[env.Today.Year + "\t" + it.Id].금액;
+                else if (it.납부있음 && it.금액규칙 == AmountRules.고정) 올해 = it.고정금액;
 
                 list.Add(ItemDto(it)
                     .Set("thisYearAmount", 올해)
                     .Set("thisYearEntered", 입력함)
-                    .Set("thisYearUnknown", !올해.HasValue && RuleNeedsAmount(it)));
+                    .Set("thisYearUnknown", !올해.HasValue && it.납부있음));
             }
             return Head(env).Set("items", list);
         }
@@ -496,6 +496,7 @@ namespace PaymentAlert
                     .Set("file", a.저장파일)
                     .Set("name", a.원본파일명)
                     .Set("stage", a.단계)
+                    .Set("kind", a.종류)
                     .Set("at", a.첨부일시 == DateTime.MinValue ? "" : a.첨부일시.ToString("yyyy-MM-dd HH:mm", Inv)));
             }
             return new JObj().Set("year", y).Set("id", id).Set("files", list);
@@ -539,48 +540,34 @@ namespace PaymentAlert
 
         // ══ 변경 ═══════════════════════════════════════════════════
 
-        JObj Advance(Env env, NameValueCollection f)
+        // 단계 변경은 DB 가 한 트랜잭션에서 확인하고 쓴다 (ADR-0004).
+        // 화면이 본 단계(stage)를 함께 보내면, 그사이 팝업이 바꾼 경우 409 로 거절한다.
+
+        const string 출처 = "웹";
+
+        JObj ChangeStage(Env env, NameValueCollection f, string 동작)
         {
             int y = 연도(f["y"]);
             PaymentItem it = 항목(env, f["id"]);
-            StatusRecord st = env.StatusOf(y, it.Id);
-            int last = Stages.FinalIndex(it.진행흐름);
-            if (st.단계 < 0) st.단계 = 0;
-            if (st.단계 >= last) throw new HttpError(409, "이미 마지막 단계입니다.");
+            int 기대 = -1;
+            string s = f["stage"];
+            if (!string.IsNullOrEmpty(s) &&
+                (!int.TryParse(s, NumberStyles.None, Inv, out 기대) || 기대 > Stages.FinalIndex(it.진행흐름)))
+                throw new HttpError(400, "단계 값이 올바르지 않습니다.");
 
-            st.단계++;
-            st.변경일시 = DateTime.Now;
-            st.최종확인일 = env.Today;
-            st.변경됨 = true;
-            env.Db.SaveStatus(new StatusRecord[] { st });
-            return Dto(env, OccurrenceOf(env, it, y), false);
-        }
-
-        JObj Defer(Env env, NameValueCollection f)
-        {
-            int y = 연도(f["y"]);
-            PaymentItem it = 항목(env, f["id"]);
-            StatusRecord st = env.StatusOf(y, it.Id);
-            st.최종확인일 = env.Today;
-            st.변경됨 = true;
-            env.Db.SaveStatus(new StatusRecord[] { st });
-            return Dto(env, OccurrenceOf(env, it, y), true);
-        }
-
-        JObj Revert(Env env, NameValueCollection f)
-        {
-            int y = 연도(f["y"]);
-            PaymentItem it = 항목(env, f["id"]);
-            StatusRecord st = env.StatusOf(y, it.Id);
-            if (st.단계 > Stages.FinalIndex(it.진행흐름)) st.단계 = Stages.FinalIndex(it.진행흐름);
-            if (st.단계 <= 0) throw new HttpError(409, "첫 단계라 되돌릴 수 없습니다.");
-
-            st.단계--;
-            st.변경일시 = DateTime.Now;
-            st.최종확인일 = null;
-            st.변경됨 = true;
-            env.Db.SaveStatus(new StatusRecord[] { st });
-            return Dto(env, OccurrenceOf(env, it, y), false);
+            try
+            {
+                StatusRecord st;
+                if (동작 == "진행") st = env.Db.Advance(y, it.Id, it.진행흐름, 기대, DateTime.Now, env.Today, 출처);
+                else if (동작 == "대기") st = env.Db.Defer(y, it.Id, 기대, DateTime.Now, env.Today, 출처);
+                else st = env.Db.Revert(y, it.Id, it.진행흐름, 기대, DateTime.Now, 출처);
+                env.Status[st.Key] = st;
+            }
+            catch (StageConflictException ce)
+            {
+                throw new HttpError(409, ce.Message);
+            }
+            return Dto(env, OccurrenceOf(env, it, y), 동작 == "대기");
         }
 
         JObj SaveAmount(Env env, NameValueCollection f)
@@ -596,7 +583,7 @@ namespace PaymentAlert
             rec.출처 = "웹 입력";
             rec.확인일 = env.Today;
             rec.비고 = 글자(f["memo"], "메모", 200, false);
-            env.Db.UpsertAmounts(new AmountRecord[] { rec });
+            env.Db.UpsertAmounts(new AmountRecord[] { rec }, 출처);
             env.Amounts[rec.Key] = rec;
             return Dto(env, OccurrenceOf(env, it, y), false);
         }
@@ -633,10 +620,26 @@ namespace PaymentAlert
 
             string lead = (f["lead"] ?? "").Trim();
             it.알림영업일 = lead.Length == 0 ? 3 : 정수(lead, "알림 영업일", 1, 60);
-            it.금액규칙 = 글자(f["rule"], "금액규칙", 40, false);
+
+            // 금액규칙은 고정/변동 두 가지 (AC-W25). 납부 없는 흐름은 금액을 받지 않는다 (AC-W27).
+            string rule = (f["rule"] ?? "").Trim();
+            if (rule.Length == 0) rule = AmountRules.변동;
+            if (!AmountRules.IsValid(rule)) throw new HttpError(400, "금액규칙은 고정 또는 변동이어야 합니다.");
+            it.금액규칙 = rule;
             string fixedText = (f["fixed"] ?? "").Trim();
-            it.고정금액 = fixedText.Length == 0 ? (decimal?)null : 금액(fixedText, "고정금액");
+            if (it.납부있음 && rule == AmountRules.고정)
+            {
+                if (fixedText.Length == 0) throw new HttpError(400, "고정 규칙은 금액을 넣어야 합니다.");
+                it.고정금액 = 금액(fixedText, "고정금액");
+            }
+            // 변동이면 금액칸에 무엇이 있어도 마스터 금액으로 쓰지 않는다 (AC-W26a).
+
             it.비고 = 글자(f["memo"], "비고", 200, false);
+            it.홈페이지명 = 글자(f["siteName"], "홈페이지 이름", 40, false);
+            it.홈페이지주소 = 주소(f["siteUrl"]);
+            if (it.홈페이지주소.Length > 0 && it.홈페이지명.Length == 0) it.홈페이지명 = "홈페이지";
+            PaymentItem 기존 = env.Item(id);
+            it.묶음 = 기존 != null ? 기존.묶음 : "";
 
             env.Db.UpsertItem(it);
 
@@ -705,7 +708,8 @@ namespace PaymentAlert
                 StatusRecord st = env.StatusOf(y, it.Id);
                 string[] stages = Stages.For(it.진행흐름);
                 int idx = Math.Max(0, Math.Min(st.단계, stages.Length - 1));
-                Attachment a = env.Files.Attach(y, it.Id, stages[idx], tmp);
+                string 종류 = q["kind"] == Attachment.받은문서 ? Attachment.받은문서 : Attachment.증빙;
+                Attachment a = env.Files.Attach(y, it.Id, stages[idx], tmp, 종류, 출처);
                 return new JObj().Set("ok", true).Set("file", a.저장파일).Set("name", a.원본파일명)
                     .Set("count", env.Files.CountFor(y, it.Id));
             }
@@ -723,7 +727,7 @@ namespace PaymentAlert
             foreach (Attachment a in env.Files.For(y, id))
             {
                 if (a.저장파일 != file) continue;
-                env.Files.Remove(a);
+                env.Files.Remove(a, 출처);
                 return new JObj().Set("ok", true).Set("count", env.Files.CountFor(y, id));
             }
             throw new HttpError(404, "증빙을 찾을 수 없습니다.");
@@ -750,8 +754,12 @@ namespace PaymentAlert
                 .Set("day", it.말일 ? "말일" : it.일.ToString(Inv))
                 .Set("lead", it.알림영업일)
                 .Set("rule", it.금액규칙 ?? "")
-                .Set("fixed", it.고정금액)
-                .Set("memo", it.비고 ?? "");
+                .Set("fixed", it.금액규칙 == AmountRules.고정 ? it.고정금액 : null)
+                .Set("memo", it.비고 ?? "")
+                .Set("siteName", it.홈페이지명 ?? "")
+                .Set("siteUrl", it.홈페이지주소 ?? "")
+                .Set("group", it.묶음 ?? "")
+                .Set("paid", it.납부있음);
         }
 
         /// <summary>
@@ -798,6 +806,11 @@ namespace PaymentAlert
                 .Set("stage", stage)
                 .Set("stageName", stages[stage])
                 .Set("nextStage", done ? null : stages[stage + 1])
+                .Set("nextAction", done ? Stages.끝남문구 : Stages.다음행동(it.진행흐름, stage))
+                .Set("paid", it.납부있음)
+                .Set("siteName", it.홈페이지명 ?? "")
+                .Set("siteUrl", it.홈페이지주소 ?? "")
+                .Set("group", it.묶음 ?? "")
                 .Set("done", done)
                 .Set("due", o.원기한일.ToString("yyyy-MM-dd", Inv))
                 .Set("dueDow", o.원기한일.ToString("ddd", Ko))
@@ -832,24 +845,9 @@ namespace PaymentAlert
             return env.Status.TryGetValue(o.Key, out st) && st.단계 >= Stages.FinalIndex(o.Item.진행흐름);
         }
 
-        /// <summary>확인된 금액 → 고정금액 순. 둘 다 없으면 null.</summary>
-        static decimal? Amount(Occurrence o)
-        {
-            if (o.실제금액 != null) return o.실제금액.금액;
-            return o.Item.고정금액;
-        }
+        static decimal? Amount(Occurrence o) { return AmountRules.금액(o); }
 
-        static bool RuleNeedsAmount(PaymentItem it)
-        {
-            string r = it.금액규칙 ?? "";
-            return r.Length > 0 && r != "해당없음";
-        }
-
-        /// <summary>납부할 돈이 있는데 금액을 모르는 건. 빈칸으로 두면 0원으로 오해한다.</summary>
-        static bool Unknown(Occurrence o)
-        {
-            return !Amount(o).HasValue && RuleNeedsAmount(o.Item);
-        }
+        static bool Unknown(Occurrence o) { return AmountRules.미확인(o); }
 
         // ══ 입력 읽기 ═══════════════════════════════════════════════
 
@@ -961,6 +959,21 @@ namespace PaymentAlert
             if (!DateTime.TryParseExact(s, "yyyy-MM-dd", Inv, DateTimeStyles.None, out d))
                 throw new HttpError(400, "날짜 형식이 올바르지 않습니다 (예: 2026-01-01).");
             return d;
+        }
+
+        /// <summary>
+        /// 신고 홈페이지 주소. http/https 만 받는다 — javascript: 같은 주소가 링크로 박히면
+        /// 누르는 순간 이 화면 안에서 스크립트가 돈다.
+        /// </summary>
+        static string 주소(string s)
+        {
+            string t = (s ?? "").Trim();
+            if (t.Length == 0) return "";
+            Uri u;
+            if (t.Length > 300 || !Uri.TryCreate(t, UriKind.Absolute, out u) ||
+                (u.Scheme != Uri.UriSchemeHttp && u.Scheme != Uri.UriSchemeHttps))
+                throw new HttpError(400, "홈페이지 주소는 http:// 또는 https:// 로 시작해야 합니다.");
+            return u.AbsoluteUri;
         }
 
         static string 파일이름(string s)

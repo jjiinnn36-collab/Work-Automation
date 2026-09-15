@@ -181,6 +181,8 @@ namespace PaymentAlert.Tests
                 이력();
                 증빙();
                 잘못된요청();
+                동시변경과기록();
+                항목규칙();
             }
             catch (Exception ex)
             {
@@ -223,7 +225,8 @@ namespace PaymentAlert.Tests
             Has("D-2영업일 (9/20 일요일 → 9/21)", r.Text, "\"statusText\":\"D-2영업일\"");
             Has("보정 기한", r.Text, "\"payDue\":\"2026-09-21\"");
             Has("금액 문구", r.Text, "\"amountText\":\"5,838,089원\"");
-            Has("다음 단계", r.Text, "\"nextStage\":\"전표결재\"");
+            Has("다음 지점", r.Text, "\"nextStage\":\"전표발행\"");
+            Has("다음 행동 (AC-W50)", r.Text, "\"nextAction\":\"전표 발행\"");
             Has("남은 건수 1", r.Text, "\"pending\":1");
             Has("알림 전 2건", r.Text, "\"notYet\":2");
             Lacks("알림일 전인 부가세는 없음", r.Text, "\"id\":\"vat-q3\"");
@@ -346,7 +349,7 @@ namespace PaymentAlert.Tests
             Check("기관 빈칸 400", Post("/api/item", "mode=new&id=x1&month=1&day=1&org=&name=b&flow=" + E("납부만")).Status, 400);
             Check("없는 항목 수정 404", Post("/api/item", "mode=edit&id=nope&month=1&day=1" + 기본).Status, 404);
 
-            Check("말일로 수정", Post("/api/item", "mode=edit&id=edu-02&month=2&day=" + E("말일") + "&fixed=" + E("30,000") + 기본).Status, 200);
+            Check("말일로 수정", Post("/api/item", "mode=edit&id=edu-02&month=2&day=" + E("말일") + "&fixed=" + E("30,000") + 기본.Replace(E("변동"), E("고정"))).Status, 200);
             using (Store db = Store.Open(DataPaths.Db(DataDir)))
             {
                 List<PaymentItem> m = db.LoadMaster();
@@ -409,7 +412,7 @@ namespace PaymentAlert.Tests
 
             r = Get("/api/attachments?y=2026&id=kofia-09");
             Has("원본 이름", r.Text, "\"name\":\"영수증 9월.pdf\"");
-            Has("첨부 시점 단계", r.Text, "\"stage\":\"납부완료\"");
+            Has("첨부 시점 단계", r.Text, "\"stage\":\"납부\"");
 
             string saved;
             using (Store db = Store.Open(DataPaths.Db(DataDir))) saved = db.LoadAttachments()[0].저장파일;
@@ -446,6 +449,62 @@ namespace PaymentAlert.Tests
             Res r = Get("/api/nothing");
             Has("오류도 JSON", r.Text, "\"error\":");
             Check("nosniff", r.Headers["X-Content-Type-Options"], "nosniff");
+        }
+
+        static void 동시변경과기록()
+        {
+            Console.WriteLine("\n[WEB-11] 화면이 본 단계와 DB 가 다르면 거절, 변경은 '웹' 으로 기록 (ADR-0004)");
+            Res r = Post("/api/advance", "y=2026&id=fss-10&stage=0");
+            Check("본 단계가 맞으면 진행", r.Status, 200);
+            r = Post("/api/advance", "y=2026&id=fss-10&stage=0");
+            Check("옛 화면(단계 0)으로 다시 누르면 409", r.Status, 409);
+            Has("이유를 알려 줌", r.Text, "다른 창에서");
+            Check("단계는 한 번만 올라감", 상태("fss-10").단계, 1);
+            Check("단계 값이 이상하면 400", Post("/api/advance", "y=2026&id=fss-10&stage=9").Status, 400);
+
+            // 팝업이 그사이 되돌린 상황
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+                db.Revert(2026, "fss-10", Flow.납부만, 1, DateTime.Now, "팝업");
+            Check("팝업이 되돌린 뒤 웹의 옛 화면(1)으로 되돌리기 409", Post("/api/revert", "y=2026&id=fss-10&stage=1").Status, 409);
+
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+            {
+                List<StatusEvent> ev = db.LoadEvents(2026, "fss-10");
+                Check("성공한 두 번만 기록", ev.Count, 2);
+                Check("최근은 팝업 되돌리기", ev[0].출처 + "/" + ev[0].동작, "팝업/되돌리기");
+                Check("그 전은 웹 진행", ev[1].출처 + "/" + ev[1].동작, "웹/진행");
+                List<StatusEvent> kev = db.LoadEvents(2026, "kofia-09");
+                CheckTrue("금액·첨부·첨부삭제도 웹 출처로 남음",
+                    kev.Exists(delegate(StatusEvent e) { return e.동작 == "첨부" && e.출처 == "웹"; }) &&
+                    kev.Exists(delegate(StatusEvent e) { return e.동작 == "첨부삭제"; }));
+                List<StatusEvent> vev = db.LoadEvents(2026, "vat-q3");
+                CheckTrue("금액 입력·삭제 기록", vev.Exists(delegate(StatusEvent e) { return e.동작 == "금액"; }) &&
+                    vev.Exists(delegate(StatusEvent e) { return e.동작 == "금액삭제"; }));
+            }
+        }
+
+        static void 항목규칙()
+        {
+            Console.WriteLine("\n[WEB-12] 금액규칙 고정/변동, 홈페이지 주소 (AC-W25~W27, W92)");
+            string 공통 = "&org=" + E("기관") + "&name=" + E("시험") + "&month=3&day=10";
+            Check("옛 규칙 값은 거절", Post("/api/item", "mode=new&id=r1&flow=" + E("납부만") + "&rule=" + E("고지수령") + 공통).Status, 400);
+            Check("고정인데 금액이 없으면 거절", Post("/api/item", "mode=new&id=r1&flow=" + E("납부만") + "&rule=" + E("고정") + 공통).Status, 400);
+            Check("변동은 금액 없이 저장", Post("/api/item", "mode=new&id=r1&flow=" + E("납부만") + "&rule=" + E("변동") + 공통).Status, 200);
+            Res r = Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + "&rule=" + E("변동") + "&fixed=5000" + 공통);
+            Has("변동에 금액을 넣어도 마스터 금액이 되지 않음 (AC-W26a)", r.Text, "\"fixed\":null");
+            r = Post("/api/item", "mode=edit&id=r1&flow=" + E("제출만") + "&rule=" + E("고정") + "&fixed=5000" + 공통);
+            Check("제출만은 고정이어도 저장", r.Status, 200);
+            Has("제출만은 금액 없음 (AC-W27)", r.Text, "\"paid\":false");
+
+            Check("javascript: 주소 거절", Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + 공통 + "&siteUrl=" + E("javascript:alert(1)")).Status, 400);
+            Check("ftp 주소 거절", Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + 공통 + "&siteUrl=" + E("ftp://x")).Status, 400);
+            r = Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + 공통 + "&siteName=" + E("홈택스") + "&siteUrl=" + E("https://hometax.go.kr"));
+            Check("https 주소 저장", r.Status, 200);
+            Has("주소 정규화", r.Text, "\"siteUrl\":\"https://hometax.go.kr/\"");
+            Has("이름 저장", Get("/api/items").Text, "\"siteName\":\"홈택스\"");
+            r = Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + 공통 + "&siteUrl=" + E("https://example.com/a"));
+            Has("이름 없이 주소만 넣으면 '홈페이지'", r.Text, "\"siteName\":\"홈페이지\"");
+            Post("/api/item/delete", "id=r1");
         }
     }
 }

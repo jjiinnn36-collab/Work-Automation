@@ -74,8 +74,43 @@ namespace PaymentAlert.Tests
             Check("신고납부 단계 수", Stages.For(Flow.신고납부).Length, 4);
             Check("납부만 단계 수",   Stages.For(Flow.납부만).Length, 3);
             Check("제출만 단계 수",   Stages.For(Flow.제출만).Length, 2);
-            Check("신고납부 마지막", Stages.For(Flow.신고납부)[3], "납부완료");
-            Check("납부만 첫 단계",   Stages.For(Flow.납부만)[0], "납부 전");
+            Check("신고납부 마지막", Stages.For(Flow.신고납부)[3], "납부");
+            Check("납부만 첫 단계",   Stages.For(Flow.납부만)[0], "고지서수령");
+
+            Console.WriteLine("\n[5b] 지점은 달성한 것, 밑줄은 행동 (AC-W49~W51, W70~W76)");
+            Check("신고납부 지점", string.Join("/", Stages.For(Flow.신고납부)), "신고서 작성/신고/전표발행/납부");
+            Check("납부만 지점", string.Join("/", Stages.For(Flow.납부만)), "고지서수령/전표발행/납부");
+            Check("제출만 지점", string.Join("/", Stages.For(Flow.제출만)), "제출자료 작성/제출");
+            Check("신고납부 시작 → 신고하기", Stages.다음행동(Flow.신고납부, 0), "신고하기");
+            Check("신고 끝남 → 전표 발행", Stages.다음행동(Flow.신고납부, 1), "전표 발행");
+            Check("전표발행 끝남 → 납부하기", Stages.다음행동(Flow.신고납부, 2), "납부하기");
+            Check("납부만 시작 → 전표 발행", Stages.다음행동(Flow.납부만, 0), "전표 발행");
+            Check("제출만 시작 → 제출하기", Stages.다음행동(Flow.제출만, 0), "제출하기");
+            CheckTrue("마지막까지 끝나면 행동 없음", Stages.다음행동(Flow.납부만, 2) == null);
+            Check("옛 이름 전표결재 → 전표발행", Stages.옛이름["전표결재"], "전표발행");
+            Check("옛 이름 납부 전 → 고지서수령", Stages.옛이름["납부 전"], "고지서수령");
+
+            Console.WriteLine("\n[5c] 금액규칙은 고정/변동 두 가지 (AC-W25~W28)");
+            Check("고정은 고정", AmountRules.Normalize("고정", 1000m), "고정");
+            Check("고지수령 → 변동", AmountRules.Normalize("고지수령", null), "변동");
+            Check("전기확정÷4 → 변동", AmountRules.Normalize("전기확정÷4", null), "변동");
+            Check("수작업 → 변동", AmountRules.Normalize("수작업", null), "변동");
+            Check("해당없음 → 변동", AmountRules.Normalize("해당없음", null), "변동");
+            Check("빈 값 → 변동", AmountRules.Normalize("", null), "변동");
+            Check("금액이 적혀 있으면 고정으로 본다", AmountRules.Normalize("고지수령", 5000m), "고정");
+            CheckTrue("고정·변동만 유효", AmountRules.IsValid("고정") && AmountRules.IsValid("변동") && !AmountRules.IsValid("수작업"));
+
+            var 규칙항목 = new PaymentItem { Id = "r", 기관 = "기관", 비용명 = "비용", 진행흐름 = Flow.납부만, 월 = 3, 일 = 10, 알림영업일 = 3 };
+            var 규칙발생 = new Occurrence { Item = 규칙항목, 연도 = 2026 };
+            규칙항목.금액규칙 = AmountRules.고정; 규칙항목.고정금액 = 7000m;
+            Check("고정 규칙은 마스터 금액", AmountRules.금액(규칙발생), 7000m);
+            규칙항목.금액규칙 = AmountRules.변동;
+            CheckTrue("변동 규칙은 마스터 금액을 쓰지 않는다 (AC-W26a)", !AmountRules.금액(규칙발생).HasValue);
+            CheckTrue("변동 + 연도 금액 없음 = 미확인", AmountRules.미확인(규칙발생));
+            규칙발생.실제금액 = new AmountRecord { 연도 = 2026, Id = "r", 금액 = 9100m };
+            Check("연도 금액이 있으면 그것", AmountRules.금액(규칙발생), 9100m);
+            규칙항목.진행흐름 = Flow.제출만;
+            CheckTrue("제출만은 금액 없음 (AC-W27)", !AmountRules.금액(규칙발생).HasValue && !AmountRules.미확인(규칙발생));
 
             Console.WriteLine("\n[6] 마스터 파일 적재");
             // 사내 자료(data/payment-master.tsv)가 아니라 저장소에 포함된 픽스처를 쓴다.
@@ -260,8 +295,8 @@ namespace PaymentAlert.Tests
 
             // 사람이 읽을 수 있도록 단계명이 함께 기록되는지
             string body = File.ReadAllText(stPath, System.Text.Encoding.UTF8);
-            CheckTrue("납부만 흐름의 단계명이 기록됨", body.Contains("전표결재"));
-            CheckTrue("제출만 흐름의 단계명이 기록됨", body.Contains("제출완료"));
+            CheckTrue("납부만 흐름의 단계명이 기록됨", body.Contains("전표발행"));
+            CheckTrue("제출만 흐름의 단계명이 기록됨", body.Contains("제출"));
             CheckTrue("UTF-8 BOM 으로 저장됨", File.ReadAllBytes(stPath)[0] == 0xEF);
 
             // 덮어쓰기 후에도 정상인지

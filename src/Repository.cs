@@ -37,8 +37,9 @@ namespace PaymentAlert
                 it.Id = id;
                 it.기관 = Tsv.Get(row, "기관");
                 it.비용명 = Tsv.Get(row, "비용명");
-                it.금액규칙 = Tsv.Get(row, "금액규칙");
                 it.고정금액 = Tsv.GetDecimal(row, "고정금액");
+                // 옛 값(고지수령·수작업·해당없음…)은 고정/변동 두 가지로 줄인다 (AC-W28).
+                it.금액규칙 = AmountRules.Normalize(Tsv.Get(row, "금액규칙"), it.고정금액);
                 it.비고 = Tsv.Get(row, "비고");
 
                 try { it.진행흐름 = Stages.Parse(Tsv.Get(row, "진행흐름")); }

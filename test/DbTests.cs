@@ -82,6 +82,10 @@ namespace PaymentAlert.Tests
                 최초이전();
                 다시가져오기();
                 항목하나씩();
+                스키마이관();
+                단계변경은원자적();
+                두창이동시에누름();
+                순서옮기기();
             }
             catch (Exception ex)
             {
@@ -106,12 +110,12 @@ namespace PaymentAlert.Tests
                 using (Store s = Store.Open(p))
                 {
                     CheckTrue("DB 파일 생성", File.Exists(p));
-                    Check("스키마 버전", s.GetMeta("schema_version"), "1");
+                    Check("스키마 버전", s.GetMeta("schema_version"), Store.스키마버전.ToString());
                     Check("빈 항목", s.LoadMaster().Count, 0);
                     Check("빈 진행 기록", s.LoadStatus().Count, 0);
                 }
                 using (Store s = Store.Open(p))
-                    Check("다시 열어도 버전 유지", s.GetMeta("schema_version"), "1");
+                    Check("다시 열어도 버전 유지", s.GetMeta("schema_version"), Store.스키마버전.ToString());
             }
             finally { 치우기(dir); }
         }
@@ -581,5 +585,220 @@ namespace PaymentAlert.Tests
                 }
             }
             finally { 치우기(dir); }
-        }    }
+        }
+
+        static void 스키마이관()
+        {
+            Console.WriteLine("\n[DB-15] 1판 파일을 열면 2판으로 옮긴다 — 자료는 잃지 않는다 (ADR-0006)");
+            string dir = 임시폴더("migrate");
+            try
+            {
+                string p = Path.Combine(dir, "old.db");
+                // 2026-09-15 에 배포한 1판과 같은 모양의 파일을 직접 만든다.
+                using (var c = new Conn(p))
+                {
+                    c.Run("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT)");
+                    c.Run("CREATE TABLE items(id TEXT PRIMARY KEY, 기관 TEXT NOT NULL, 비용명 TEXT NOT NULL, 진행흐름 TEXT NOT NULL, " +
+                          "월 INTEGER NOT NULL, 말일 INTEGER NOT NULL DEFAULT 0, 일 INTEGER NOT NULL DEFAULT 0, 알림영업일 INTEGER NOT NULL DEFAULT 3, " +
+                          "금액규칙 TEXT NOT NULL DEFAULT '', 고정금액 TEXT, 비고 TEXT NOT NULL DEFAULT '', 순서 INTEGER NOT NULL DEFAULT 0)");
+                    c.Run("CREATE TABLE attachments(rid INTEGER PRIMARY KEY AUTOINCREMENT, 연도 INTEGER NOT NULL, id TEXT NOT NULL, " +
+                          "단계 TEXT NOT NULL DEFAULT '', 저장파일 TEXT NOT NULL, 원본파일명 TEXT NOT NULL DEFAULT '', 첨부일시 TEXT)");
+                    c.Run("INSERT INTO meta VALUES('schema_version','1')");
+                    string ins = "INSERT INTO items(id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,순서) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)";
+                    c.Run(ins, "gx-05", "협회", "회비", "납부만", 5, 0, 20, 3, "고지수령", null, "", 0);
+                    c.Run(ins, "gx-06", "협회", "회비", "납부만", 6, 0, 20, 3, "고지수령", null, "", 1);
+                    c.Run(ins, "fixed", "공사", "기여금", "납부만", 3, 1, 0, 3, "고정", "100000", "", 2);
+                    c.Run(ins, "odd", "기관", "금액만 적힌 건", "납부만", 4, 0, 10, 3, "수작업", "2500", "", 3);
+                    c.Run(ins, "sub", "기관", "제출", "제출만", 6, 1, 0, 3, "해당없음", null, "", 4);
+                    c.Run(ins, "solo-07", "기관", "단독", "납부만", 7, 0, 1, 3, "수작업", null, "", 5);
+                    c.Run("INSERT INTO attachments(연도,id,단계,저장파일,원본파일명,첨부일시) VALUES(2026,'gx-05','전표결재','a.pdf','a.pdf','2026-05-01 10:00:00')");
+                    c.Run("INSERT INTO attachments(연도,id,단계,저장파일,원본파일명,첨부일시) VALUES(2026,'gx-05','납부완료','b.pdf','b.pdf','2026-05-02 10:00:00')");
+                }
+
+                using (Store s = Store.Open(p))
+                {
+                    Check("버전이 2 로", s.GetMeta("schema_version"), "2");
+                    List<PaymentItem> m = s.LoadMaster();
+                    Check("항목 수 그대로", m.Count, 6);
+                    Func<string, PaymentItem> 찾기 = delegate(string id) { return m.Find(delegate(PaymentItem x) { return x.Id == id; }); };
+                    Check("고지수령 → 변동", 찾기("gx-05").금액규칙, "변동");
+                    Check("고정 그대로", 찾기("fixed").금액규칙, "고정");
+                    Check("고정금액 보존", 찾기("fixed").고정금액, 100000m);
+                    Check("금액이 적힌 수작업 → 고정 (금액을 버리지 않음)", 찾기("odd").금액규칙, "고정");
+                    Check("그 금액도 보존", 찾기("odd").고정금액, 2500m);
+                    Check("해당없음 → 변동", 찾기("sub").금액규칙, "변동");
+                    Check("분할 회차는 한 묶음", 찾기("gx-05").묶음 + "|" + 찾기("gx-06").묶음, "gx|gx");
+                    Check("회차가 하나뿐이면 묶음 없음", 찾기("solo-07").묶음, "");
+                    Check("새 칸 기본값", 찾기("gx-05").홈페이지주소, "");
+
+                    List<Attachment> atts = s.LoadAttachments();
+                    Check("옛 단계 이름 전표결재 → 전표발행", atts[0].단계, "전표발행");
+                    Check("옛 단계 이름 납부완료 → 납부", atts[1].단계, "납부");
+                    Check("옛 첨부는 증빙 종류", atts[0].종류, Attachment.증빙);
+                    Check("변경 기록 표가 비어 있음", s.LoadEvents(2026, "gx-05").Count, 0);
+                }
+
+                string[] backups = Directory.GetFiles(Path.Combine(dir, "backups"), "*이관전*.db");
+                Check("이관 전 사본 1개", backups.Length, 1);
+                using (Store b = Store.Open(backups[0]))
+                    Check("사본을 열면 그것도 이관되지만 원래 항목이 다 있음", b.LoadMaster().Count, 6);
+
+                using (Store s = Store.Open(p))
+                    Check("다시 열어도 이관은 한 번만 (사본 수 그대로)", Directory.GetFiles(Path.Combine(dir, "backups"), "납부알림-v1*").Length, 1);
+
+                // 이 프로그램보다 새 판 파일은 열지 않는다 — 모르는 칸을 망가뜨리지 않게.
+                using (Store s = Store.Open(p)) s.SetMeta("schema_version", "99");
+                bool 거절 = false;
+                try { using (Store.Open(p)) { } }
+                catch (InvalidOperationException) { 거절 = true; }
+                CheckTrue("더 새 판 파일은 거절", 거절);
+            }
+            finally { 치우기(dir); }
+        }
+
+        static void 단계변경은원자적()
+        {
+            Console.WriteLine("\n[DB-16] 진행·대기·되돌리기는 확인과 쓰기가 한 번에, 기록이 남는다 (ADR-0004)");
+            string dir = 임시폴더("atomic");
+            try
+            {
+                using (Store s = Store.Open(Path.Combine(dir, "t.db")))
+                {
+                    DateTime 지금 = new DateTime(2026, 9, 16, 10, 30, 0);
+                    DateTime 오늘 = new DateTime(2026, 9, 16);
+
+                    StatusRecord a = s.Advance(2026, "k", Flow.납부만, 0, 지금, 오늘, "팝업");
+                    Check("진행 → 단계 1", a.단계, 1);
+                    Check("진행하면 오늘 확인", a.최종확인일.Value.ToString("yyyy-MM-dd"), "2026-09-16");
+                    Check("DB 에도 1", s.LoadStatus(2026, "k").단계, 1);
+
+                    bool 충돌 = false;
+                    try { s.Advance(2026, "k", Flow.납부만, 0, 지금, 오늘, "웹"); }
+                    catch (StageConflictException ce) { 충돌 = ce.현재단계 == 1; }
+                    CheckTrue("옛 단계(0)를 보고 누르면 거절, 지금 단계를 알려 줌", 충돌);
+                    Check("거절된 누름은 반영 안 됨", s.LoadStatus(2026, "k").단계, 1);
+
+                    StatusRecord d = s.Defer(2026, "k", 1, 지금.AddHours(1), 오늘.AddDays(1), "웹");
+                    Check("대기는 단계 그대로", d.단계, 1);
+                    Check("대기는 확인일만", d.최종확인일.Value.ToString("yyyy-MM-dd"), "2026-09-17");
+
+                    s.Advance(2026, "k", Flow.납부만, 1, 지금, 오늘, "웹");
+                    bool 끝 = false;
+                    try { s.Advance(2026, "k", Flow.납부만, -1, 지금, 오늘, "웹"); }
+                    catch (StageConflictException) { 끝 = true; }
+                    CheckTrue("마지막 단계 넘어 진행은 거절", 끝);
+
+                    StatusRecord r = s.Revert(2026, "k", Flow.납부만, 2, 지금, "보드");
+                    Check("되돌리면 1", r.단계, 1);
+                    CheckTrue("되돌리면 확인일 지움", !r.최종확인일.HasValue);
+                    s.Revert(2026, "k", Flow.납부만, 1, 지금, "보드");
+                    bool 처음 = false;
+                    try { s.Revert(2026, "k", Flow.납부만, 0, 지금, "보드"); }
+                    catch (StageConflictException) { 처음 = true; }
+                    CheckTrue("첫 단계에서 되돌리기는 거절", 처음);
+
+                    List<StatusEvent> ev = s.LoadEvents(2026, "k");
+                    Check("성공한 동작만 기록 (진행·대기·진행·되돌리기·되돌리기)", ev.Count, 5);
+                    Check("최근 것이 먼저", ev[0].동작, "되돌리기");
+                    Check("출처 기록", ev[0].출처, "보드");
+                    Check("이전·이후 단계", ev[0].이전단계 + "→" + ev[0].이후단계, "1→0");
+                    Check("첫 기록은 팝업의 진행", ev[4].동작 + "/" + ev[4].출처, "진행/팝업");
+                    Check("진행 기록 내용은 도달 지점", ev[4].내용, "전표발행");
+
+                    s.UpsertAmounts(new AmountRecord[] { 금액(2026, "k", 1234m, "고지서", "") }, "웹");
+                    s.DeleteAmount(2026, "k", "웹");
+                    s.AddEvent(2026, "k", "첨부", "웹", "영수증.pdf");
+                    ev = s.LoadEvents(2026, "k");
+                    Check("금액 입력·삭제·첨부도 기록", ev[2].동작 + "," + ev[1].동작 + "," + ev[0].동작, "금액,금액삭제,첨부");
+                    CheckTrue("금액 기록에 금액이 적힘", ev[2].내용.Contains("1,234"));
+
+                    Check("기간 조회", s.LoadEvents(DateTime.Today, DateTime.Today, 100).Count, 8);
+                    Check("기간 밖은 없음", s.LoadEvents(new DateTime(2000, 1, 1), new DateTime(2000, 1, 2), 100).Count, 0);
+                    Check("무결성 검사", s.무결성검사(), "ok");
+                }
+            }
+            finally { 치우기(dir); }
+        }
+
+        static void 두창이동시에누름()
+        {
+            Console.WriteLine("\n[DB-17] 팝업과 웹이 같은 건을 거의 동시에 눌러도 한 번만 진행된다 (AC-W14)");
+            string dir = 임시폴더("race");
+            try
+            {
+                string p = Path.Combine(dir, "t.db");
+                using (Store.Open(p)) { }
+                int 성공 = 0, 거절 = 0;
+                var threads = new List<System.Threading.Thread>();
+                object 잠금 = new object();
+                for (int i = 0; i < 6; i++)
+                {
+                    string 출처 = i % 2 == 0 ? "팝업" : "웹";
+                    var t = new System.Threading.Thread(delegate()
+                    {
+                        using (Store s = Store.Open(p))
+                        {
+                            try
+                            {
+                                s.Advance(2026, "same", Flow.신고납부, 0, DateTime.Now, DateTime.Today, 출처);
+                                lock (잠금) 성공++;
+                            }
+                            catch (StageConflictException) { lock (잠금) 거절++; }
+                        }
+                    });
+                    threads.Add(t);
+                }
+                foreach (var t in threads) t.Start();
+                foreach (var t in threads) t.Join();
+
+                Check("여섯 번 중 한 번만 성공", 성공, 1);
+                Check("나머지는 거절", 거절, 5);
+                using (Store s = Store.Open(p))
+                {
+                    Check("단계는 1", s.LoadStatus(2026, "same").단계, 1);
+                    Check("기록도 1건", s.LoadEvents(2026, "same").Count, 1);
+                }
+            }
+            finally { 치우기(dir); }
+        }
+
+        static void 순서옮기기()
+        {
+            Console.WriteLine("\n[DB-18] 항목 순서 옮기기와 여러 건 한꺼번에 넣기");
+            string dir = 임시폴더("order");
+            try
+            {
+                using (Store s = Store.Open(Path.Combine(dir, "t.db")))
+                {
+                    s.UpsertItems(new PaymentItem[] {
+                        항목("a", "기관", "가", Flow.납부만, 1, false, 10, 3, "변동", null),
+                        항목("b", "기관", "나", Flow.납부만, 2, false, 10, 3, "변동", null),
+                        항목("c", "기관", "다", Flow.납부만, 3, false, 10, 3, "변동", null) });
+                    Check("넣은 순서", string.Join(",", s.LoadMaster().ConvertAll(delegate(PaymentItem x) { return x.Id; }).ToArray()), "a,b,c");
+                    CheckTrue("아래로", s.MoveItem("a", 1));
+                    Check("a 가 둘째로", string.Join(",", s.LoadMaster().ConvertAll(delegate(PaymentItem x) { return x.Id; }).ToArray()), "b,a,c");
+                    CheckTrue("맨 위에서 위로는 그대로", !s.MoveItem("b", -1));
+                    CheckTrue("없는 항목은 그대로", !s.MoveItem("zz", 1));
+
+                    PaymentItem v = 항목("v", "기관", "변동에 금액", Flow.납부만, 4, false, 10, 3, "변동", 999m);
+                    v.금액규칙 = AmountRules.변동;
+                    s.UpsertItem(v);
+                    PaymentItem got = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "v"; });
+                    Check("명시적 변동 + 금액은 고정으로 정규화 (금액 보존)", got.금액규칙, "고정");
+
+                    PaymentItem sub = 항목("s", "기관", "제출", Flow.제출만, 4, false, 10, 3, "고정", 500m);
+                    s.UpsertItem(sub);
+                    got = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "s"; });
+                    CheckTrue("제출만은 마스터 금액을 두지 않음", !got.고정금액.HasValue);
+
+                    PaymentItem site = 항목("h", "국세청", "부가세", Flow.신고납부, 7, false, 25, 5, "변동", null);
+                    site.홈페이지명 = "홈택스"; site.홈페이지주소 = "https://hometax.go.kr/"; site.묶음 = "vat";
+                    s.UpsertItem(site);
+                    got = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "h"; });
+                    Check("홈페이지·묶음 왕복", got.홈페이지명 + "|" + got.홈페이지주소 + "|" + got.묶음, "홈택스|https://hometax.go.kr/|vat");
+                }
+            }
+            finally { 치우기(dir); }
+        }
+    }
 }

@@ -177,6 +177,46 @@ namespace PaymentAlert
                 overdue.Count, string.Join(", ", names.ToArray()), tail);
         }
 
+        /// <summary>
+        /// 누른 즉시 DB 에 쓰는 통로 (ADR-0004). 인자는 행과 동작(진행/대기/되돌리기),
+        /// 돌려주는 값은 DB 에 기록된 뒤의 상태. 비어 있으면 메모리에서만 바꾼다 (화면 시험용).
+        /// </summary>
+        public Func<AlertRow, string, StatusRecord> 단계변경;
+
+        /// <summary>동작을 적용한다. 다른 창이 먼저 바꿨으면 알리고 최신 단계로 맞춘 뒤 false.</summary>
+        bool 적용(AlertRow row, string 동작)
+        {
+            if (단계변경 == null)
+            {
+                if (동작 == "진행") { row.Status.단계++; row.Status.변경일시 = DateTime.Now; row.Status.최종확인일 = today; }
+                else if (동작 == "대기") row.Status.최종확인일 = today;
+                else { row.Status.단계--; row.Status.변경일시 = DateTime.Now; row.Status.최종확인일 = null; }
+                return true;
+            }
+
+            try
+            {
+                StatusRecord st = 단계변경(row, 동작);
+                row.Status.단계 = st.단계;
+                row.Status.변경일시 = st.변경일시;
+                row.Status.최종확인일 = st.최종확인일;
+                return true;
+            }
+            catch (StageConflictException ce)
+            {
+                row.Status.단계 = ce.현재단계;
+                MessageBox.Show(this, ce.Message, "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                RefreshState();
+                return false;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "저장하지 못했습니다. 다시 눌러 주세요.\r\n\r\n" + ex.Message,
+                    "납부 기한 알림 - 저장 실패", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return false;
+            }
+        }
+
         /// <summary>단계 진행/대기/되돌리기 후 화면 전체를 다시 그린다.</summary>
         public void RefreshState()
         {
@@ -409,27 +449,21 @@ namespace PaymentAlert
             void Advance()
             {
                 if (row.최종단계도달) return;
-                row.Status.단계++;
-                row.Status.변경일시 = DateTime.Now;
-                row.Status.최종확인일 = today;
-                row.Status.변경됨 = true;
+                if (!owner.적용(row, "진행")) return;
                 row.오늘단계변경 = true;
                 owner.RefreshState();
             }
 
             void Defer()
             {
-                row.Status.최종확인일 = today;
-                row.Status.변경됨 = true;
+                if (!owner.적용(row, "대기")) return;
                 owner.RefreshState();
             }
 
             void Revert()
             {
                 if (row.Status.단계 <= 0) return;
-                row.Status.단계--;
-                row.Status.변경일시 = DateTime.Now;
-                row.Status.변경됨 = true;
+                if (!owner.적용(row, "되돌리기")) return;
                 owner.RefreshState();
             }
 
@@ -480,7 +514,7 @@ namespace PaymentAlert
 
                 // ── 버튼 ──
                 진행.Visible = !done;
-                진행.Text = done ? "" : row.다음단계명;
+                진행.Text = done ? "" : row.다음행동;
                 if (!done)
                 {
                     // 글자 길이에 맞춰 알약 폭을 잡는다. 고정폭이면 단계 이름이 잘린다.
@@ -521,16 +555,10 @@ namespace PaymentAlert
 
             static string 금액표시(Occurrence occ)
             {
-                // 그 해 고지서에서 확인한 실제 금액이 있으면 그것이 우선이다.
-                if (occ.실제금액 != null)
-                    return string.Format("{0:N0}원", occ.실제금액.금액);
-
-                PaymentItem it = occ.Item;
-                if (it.고정금액.HasValue)
-                    return string.Format("{0:N0}원", it.고정금액.Value);
-                if (it.금액규칙 == "해당없음" || it.금액규칙.Length == 0)
-                    return "금액 없음";
-                return "금액 미확인 (" + it.금액규칙 + ")";
+                // 그 해 고지서에서 확인한 금액 → 고정 규칙의 마스터 금액 순 (AmountRules).
+                decimal? a = AmountRules.금액(occ);
+                if (a.HasValue) return string.Format("{0:N0}원", a.Value);
+                return AmountRules.미확인(occ) ? "금액 미확인" : "금액 없음";
             }
         }
     }

@@ -98,6 +98,12 @@ namespace PaymentAlert
         /// </summary>
         public Attachment Attach(int year, string id, string stage, string sourcePath)
         {
+            return Attach(year, id, stage, sourcePath, Attachment.증빙, null);
+        }
+
+        /// <summary>종류(증빙/받은문서)와 출처를 함께 준다. 출처가 있으면 DB 변경 기록에도 남긴다.</summary>
+        public Attachment Attach(int year, string id, string stage, string sourcePath, string 종류, string 출처)
+        {
             if (!File.Exists(sourcePath))
                 throw new FileNotFoundException("첨부할 파일을 찾을 수 없습니다.", sourcePath);
 
@@ -127,11 +133,16 @@ namespace PaymentAlert
             a.저장파일 = MakeRelative(target);
             a.원본파일명 = originalName;
             a.첨부일시 = DateTime.Now;
+            a.종류 = 종류 == Attachment.받은문서 ? Attachment.받은문서 : Attachment.증빙;
 
             if (db != null)
             {
                 // 목록에 못 넣었으면 복사본도 지운다. 목록에 없는 파일이 폴더에 쌓이면 안 된다.
-                try { db.AddAttachment(a); }
+                try
+                {
+                    db.AddAttachment(a);
+                    if (출처 != null) db.AddEvent(year, id, a.종류 == Attachment.받은문서 ? "문서첨부" : "첨부", 출처, originalName);
+                }
                 catch
                 {
                     try { File.Delete(target); } catch { }
@@ -147,8 +158,17 @@ namespace PaymentAlert
         /// <summary>목록에서 빼고 복사본도 지운다.</summary>
         public void Remove(Attachment a)
         {
+            Remove(a, null);
+        }
+
+        public void Remove(Attachment a, string 출처)
+        {
             // 목록에서 먼저 뺀다. 실패하면 예외가 나가고 파일도 그대로 남는다.
-            if (db != null) db.RemoveAttachment(a);
+            if (db != null)
+            {
+                db.RemoveAttachment(a);
+                if (출처 != null) db.AddEvent(a.연도, a.Id, "첨부삭제", 출처, a.원본파일명);
+            }
 
             List<Attachment> list;
             if (byKey.TryGetValue(a.Key, out list)) list.Remove(a);
