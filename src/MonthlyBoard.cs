@@ -247,13 +247,13 @@ namespace PaymentAlert
         {
             StatusRecord st;
             if (!status.TryGetValue(o.Key, out st)) return false;
-            return st.단계 >= Stages.FinalIndex(o.Item.진행흐름);
+            return st.단계 >= Stages.FinalIndex(o.Item);
         }
 
         static string StageName(Occurrence o, Dictionary<string, StatusRecord> status)
         {
             StatusRecord st;
-            string[] stages = Stages.For(o.Item.진행흐름);
+            string[] stages = Stages.For(o.Item);
             if (!status.TryGetValue(o.Key, out st)) return stages[0];
             int i = st.단계;
             if (i < 0) i = 0;
@@ -444,7 +444,7 @@ namespace PaymentAlert
                     return;
                 }
 
-                string[] stages = Stages.For(o.Item.진행흐름);
+                string[] stages = Stages.For(o.Item);
                 int 이전 = st.단계 - 1;
                 if (st.단계 >= stages.Length) st.단계 = stages.Length - 1;
 
@@ -462,7 +462,7 @@ namespace PaymentAlert
                 // 확인창을 띄운 사이 다른 창에서 바뀌었으면 DB 가 거절한다 (ADR-0004).
                 // 되돌리면 오늘 확인 표시도 지워져 팝업이 다시 물어본다.
                 using (Store db = Store.Open(DataPaths.Db(dataDir)))
-                    db.Revert(o.연도, o.Item.Id, o.Item.진행흐름, st.단계, DateTime.Now, "보드");
+                    db.Revert(o.연도, o.Item.Id, Stages.For(o.Item), st.단계, DateTime.Now, "보드");
                 Reload();
             }
             catch (StageConflictException ce)

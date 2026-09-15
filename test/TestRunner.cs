@@ -87,6 +87,21 @@ namespace PaymentAlert.Tests
             Check("납부만 시작 → 전표 발행", Stages.다음행동(Flow.납부만, 0), "전표 발행");
             Check("제출만 시작 → 제출하기", Stages.다음행동(Flow.제출만, 0), "제출하기");
             CheckTrue("마지막까지 끝나면 행동 없음", Stages.다음행동(Flow.납부만, 2) == null);
+
+            // 사용자설정 흐름 (ADR-0015)
+            var cu = new PaymentItem();
+            cu.진행흐름 = Stages.Parse("사용자설정");
+            Check("정의 없는 사용자설정은 최소 흐름", string.Join("/", Stages.For(cu)), "시작/완료");
+            Stages.단계정의읽기(cu, "받음|\n결재|결재 올리기\n끝|");
+            Check("정의 읽기", string.Join("/", Stages.For(cu)), "받음/결재/끝");
+            Check("정의 쓰기 왕복", Stages.단계정의(cu), "받음|\n결재|결재 올리기\n끝|");
+            Check("사용자 버튼 문구", Stages.다음행동(cu, 0), "결재 올리기");
+            Check("사용자 마지막 지점", Stages.FinalIndex(cu), 2);
+            CheckTrue("기본은 금액 있음", cu.납부있음);
+            var 보통 = new PaymentItem();
+            보통.진행흐름 = Flow.납부만;
+            Check("보통 흐름은 정의 안 씀", Stages.단계정의(보통), "");
+            Check("보통 흐름 행동은 기존 규칙", Stages.다음행동(보통, 0), "전표 발행");
             Check("옛 이름 전표결재 → 전표발행", Stages.옛이름["전표결재"], "전표발행");
             Check("옛 이름 납부 전 → 고지서수령", Stages.옛이름["납부 전"], "고지서수령");
 

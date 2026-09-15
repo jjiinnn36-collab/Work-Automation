@@ -4,7 +4,7 @@ using System.Collections.Generic;
 namespace PaymentAlert
 {
     /// <summary>진행흐름 종류.</summary>
-    public enum Flow { 신고납부, 납부만, 제출만 }
+    public enum Flow { 신고납부, 납부만, 제출만, 사용자설정 }
 
     /// <summary>
     /// 진행흐름별 지점 정의. 지점 이름은 '달성한 것' 이다 (AC-W73).
@@ -23,6 +23,13 @@ namespace PaymentAlert
 
         public const string 끝남문구 = "모두 끝났습니다";
 
+        /// <summary>사용자설정 흐름인데 단계 정의가 없을 때 쓰는 최소 흐름.</summary>
+        public static readonly string[] 사용자기본 = { "시작", "완료" };
+
+        public const int 사용자최소단계 = 2;
+        public const int 사용자최대단계 = 8;
+        public const int 이름최대 = 20;
+
         public static string[] For(Flow flow)
         {
             switch (flow)
@@ -30,8 +37,84 @@ namespace PaymentAlert
                 case Flow.신고납부: return 신고납부;
                 case Flow.납부만: return 납부만;
                 case Flow.제출만: return 제출만;
+                case Flow.사용자설정: return 사용자기본;
                 default: throw new ArgumentOutOfRangeException("flow");
             }
+        }
+
+        /// <summary>항목의 지점 목록. 사용자설정이면 사용자가 정한 단계 (ADR-0015).</summary>
+        public static string[] For(PaymentItem it)
+        {
+            if (it.진행흐름 == Flow.사용자설정 && it.사용자단계 != null && it.사용자단계.Length >= 사용자최소단계)
+                return it.사용자단계;
+            return For(it.진행흐름);
+        }
+
+        public static int FinalIndex(PaymentItem it) { return For(it).Length - 1; }
+
+        /// <summary>
+        /// 항목에서 stage 까지 끝냈을 때 지금 누를 행동. 사용자설정은 적어 둔 버튼 문구, 없으면 지점 이름.
+        /// </summary>
+        public static string 다음행동(PaymentItem it, int stage)
+        {
+            if (it.진행흐름 != Flow.사용자설정) return 다음행동(it.진행흐름, stage);
+            string[] names = For(it);
+            int next = stage + 1;
+            if (next < 1 || next >= names.Length) return null;
+            string a = it.사용자행동 != null && next < it.사용자행동.Length ? (it.사용자행동[next] ?? "").Trim() : "";
+            return a.Length > 0 ? a : names[next];
+        }
+
+        /// <summary>
+        /// 사용자 단계 정의를 한 칸 글자로: 줄마다 '지점|버튼문구'. DB 의 items.단계정의 에 담는다.
+        /// </summary>
+        public static string 단계정의(PaymentItem it)
+        {
+            if (it.진행흐름 != Flow.사용자설정 || it.사용자단계 == null) return "";
+            var lines = new List<string>();
+            for (int i = 0; i < it.사용자단계.Length; i++)
+            {
+                string a = it.사용자행동 != null && i < it.사용자행동.Length ? it.사용자행동[i] ?? "" : "";
+                lines.Add(it.사용자단계[i] + "|" + a);
+            }
+            return string.Join("\n", lines.ToArray());
+        }
+
+        public static void 단계정의읽기(PaymentItem it, string text)
+        {
+            it.사용자단계 = null;
+            it.사용자행동 = null;
+            if (string.IsNullOrEmpty(text)) return;
+            var names = new List<string>();
+            var actions = new List<string>();
+            foreach (string raw in text.Replace("\r", "").Split('\n'))
+            {
+                if (raw.Trim().Length == 0) continue;
+                int bar = raw.IndexOf('|');
+                names.Add((bar < 0 ? raw : raw.Substring(0, bar)).Trim());
+                actions.Add(bar < 0 ? "" : raw.Substring(bar + 1).Trim());
+            }
+            it.사용자단계 = names.ToArray();
+            it.사용자행동 = actions.ToArray();
+        }
+
+        /// <summary>사용자 단계 검사. 문제가 있으면 사용자에게 보일 문구, 없으면 null.</summary>
+        public static string 단계검사(string[] names, string[] actions)
+        {
+            if (names == null || names.Length < 사용자최소단계 || names.Length > 사용자최대단계)
+                return string.Format("단계는 {0}~{1}개여야 합니다 (첫 단계는 시작 지점).", 사용자최소단계, 사용자최대단계);
+            var seen = new HashSet<string>();
+            for (int i = 0; i < names.Length; i++)
+            {
+                string n = (names[i] ?? "").Trim();
+                string a = actions != null && i < actions.Length ? (actions[i] ?? "").Trim() : "";
+                if (n.Length == 0) return (i + 1) + "번째 단계 이름을 넣어 주세요.";
+                if (n.Length > 이름최대 || a.Length > 이름최대) return string.Format("단계 이름과 버튼 문구는 {0}자까지입니다.", 이름최대);
+                foreach (char ch in n + a)
+                    if (ch == '|' || char.IsControl(ch)) return "단계 이름에 | 나 줄바꿈은 쓸 수 없습니다.";
+                if (!seen.Add(n)) return "같은 단계 이름이 두 번 있습니다: " + n;
+            }
+            return null;
         }
 
         static string[] ActionsFor(Flow flow)
@@ -58,7 +141,8 @@ namespace PaymentAlert
             if (t == "신고납부") return Flow.신고납부;
             if (t == "납부만") return Flow.납부만;
             if (t == "제출만") return Flow.제출만;
-            throw new FormatException("알 수 없는 진행흐름: '" + text + "' (신고납부 / 납부만 / 제출만 중 하나여야 합니다)");
+            if (t == "사용자설정") return Flow.사용자설정;
+            throw new FormatException("알 수 없는 진행흐름: '" + text + "' (신고납부 / 납부만 / 제출만 / 사용자설정 중 하나여야 합니다)");
         }
 
         /// <summary>해당 흐름의 마지막 단계 인덱스.</summary>
@@ -136,13 +220,28 @@ namespace PaymentAlert
         /// </summary>
         public string 묶음 = "";
 
+        /// <summary>사용자설정 흐름의 지점 이름 (첫 칸 = 시작 지점). 그 밖의 흐름은 null.</summary>
+        public string[] 사용자단계;
+        /// <summary>사용자설정 흐름에서 각 지점에 도달할 때 누를 버튼 문구. 비면 지점 이름.</summary>
+        public string[] 사용자행동;
+        /// <summary>사용자설정 흐름에서 돈을 내지 않는 건(제출 등)이면 true.</summary>
+        public bool 금액없음;
+
         public string 표시명
         {
             get { return 비용명 + " (" + 기관 + ")"; }
         }
 
-        /// <summary>돈을 내는 건인가. 제출만 흐름은 금액이 해당 없다.</summary>
-        public bool 납부있음 { get { return 진행흐름 != Flow.제출만; } }
+        /// <summary>돈을 내는 건인가. 제출만 흐름, 금액 없음으로 정한 사용자설정 흐름은 금액이 해당 없다.</summary>
+        public bool 납부있음
+        {
+            get
+            {
+                if (진행흐름 == Flow.제출만) return false;
+                if (진행흐름 == Flow.사용자설정) return !금액없음;
+                return true;
+            }
+        }
 
         /// <summary>지정 연도의 원 기한일. 말일이면 윤년을 반영한다.</summary>
         public DateTime 원기한일(int year)
@@ -254,10 +353,10 @@ namespace PaymentAlert
         public bool 오늘단계변경;
 
         public Flow Flow { get { return Occ.Item.진행흐름; } }
-        public string[] 단계목록 { get { return Stages.For(Flow); } }
+        public string[] 단계목록 { get { return Stages.For(Occ.Item); } }
         public int 단계 { get { return Status.단계; } }
-        public string 현재단계명 { get { return 단계목록[단계]; } }
-        public bool 최종단계도달 { get { return 단계 >= Stages.FinalIndex(Flow); } }
+        public string 현재단계명 { get { return 단계목록[Math.Min(단계, 단계목록.Length - 1)]; } }
+        public bool 최종단계도달 { get { return 단계 >= Stages.FinalIndex(Occ.Item); } }
 
         public string 다음단계명
         {
@@ -265,7 +364,7 @@ namespace PaymentAlert
         }
 
         /// <summary>지금 누를 행동 (예: 전표 발행). 끝났으면 null.</summary>
-        public string 다음행동 { get { return Stages.다음행동(Flow, 단계); } }
+        public string 다음행동 { get { return Stages.다음행동(Occ.Item, 단계); } }
 
         /// <summary>오늘 처리되었는가. 닫기 가능 판정에 쓰인다.</summary>
         public bool 오늘처리됨(DateTime today)

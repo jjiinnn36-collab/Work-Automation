@@ -199,7 +199,7 @@ namespace PaymentAlert
     public sealed class Store : IDisposable
     {
         public const string 파일이름 = "납부알림.db";
-        public const int 스키마버전 = 2;
+        public const int 스키마버전 = 3;
 
         readonly Conn c;
         public string 파일경로 { get; private set; }
@@ -283,6 +283,29 @@ namespace PaymentAlert
             }
 
             if (v < 2) c.Tx(이관2);
+            if (v < 3) c.Tx(이관3);
+        }
+
+        /// <summary>
+        /// 2판 → 3판. 진행흐름에 '사용자설정' 을 허용하고 사용자 단계 정의·금액 없음 칸을 더한다 (ADR-0015).
+        /// SQLite 는 CHECK 를 고칠 수 없어 items 표를 새로 만들어 옮긴다. 한 트랜잭션이라 중간에 끊겨도 옛 표가 남는다.
+        /// </summary>
+        void 이관3()
+        {
+            c.Run("CREATE TABLE items_v3(" +
+                  "id TEXT PRIMARY KEY, 기관 TEXT NOT NULL, 비용명 TEXT NOT NULL, " +
+                  "진행흐름 TEXT NOT NULL CHECK(진행흐름 IN ('신고납부','납부만','제출만','사용자설정')), " +
+                  "월 INTEGER NOT NULL CHECK(월 BETWEEN 1 AND 12), " +
+                  "말일 INTEGER NOT NULL DEFAULT 0, 일 INTEGER NOT NULL DEFAULT 0, " +
+                  "알림영업일 INTEGER NOT NULL DEFAULT 3, 금액규칙 TEXT NOT NULL DEFAULT '', " +
+                  "고정금액 TEXT, 비고 TEXT NOT NULL DEFAULT '', 순서 INTEGER NOT NULL DEFAULT 0, " +
+                  "홈페이지명 TEXT NOT NULL DEFAULT '', 홈페이지주소 TEXT NOT NULL DEFAULT '', 묶음 TEXT NOT NULL DEFAULT '', " +
+                  "단계정의 TEXT NOT NULL DEFAULT '', 금액없음 INTEGER NOT NULL DEFAULT 0)");
+            const string 옛칸 = "id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,순서,홈페이지명,홈페이지주소,묶음";
+            c.Run("INSERT INTO items_v3(" + 옛칸 + ") SELECT " + 옛칸 + " FROM items");
+            c.Run("DROP TABLE items");
+            c.Run("ALTER TABLE items_v3 RENAME TO items");
+            SetMeta("schema_version", "3");
         }
 
         /// <summary>
@@ -361,7 +384,8 @@ namespace PaymentAlert
         }
 
         // ── 납부 항목 ──
-        const string 항목칸 = "id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,홈페이지명,홈페이지주소,묶음";
+        const string 항목칸 = "id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,홈페이지명,홈페이지주소,묶음,단계정의,금액없음";
+        const string 항목자리 = "?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?";
 
         public List<PaymentItem> LoadMaster()
         {
@@ -384,6 +408,11 @@ namespace PaymentAlert
                     it.홈페이지명 = r.Str(11);
                     it.홈페이지주소 = r.Str(12);
                     it.묶음 = r.Str(13);
+                    if (it.진행흐름 == Flow.사용자설정)
+                    {
+                        Stages.단계정의읽기(it, r.Str(14));
+                        it.금액없음 = r.Long(15) != 0;
+                    }
                     list.Add(it);
                 });
             return list;
@@ -397,7 +426,8 @@ namespace PaymentAlert
             return new object[] {
                 it.Id, it.기관 ?? "", it.비용명 ?? "", it.진행흐름.ToString(), it.월, it.말일,
                 it.말일 ? 0 : it.일, it.알림영업일, rule, M(fixedAmount), it.비고 ?? "",
-                it.홈페이지명 ?? "", it.홈페이지주소 ?? "", it.묶음 ?? "", 순서 };
+                it.홈페이지명 ?? "", it.홈페이지주소 ?? "", it.묶음 ?? "",
+                Stages.단계정의(it), it.진행흐름 == Flow.사용자설정 && it.금액없음 ? 1 : 0, 순서 };
         }
 
         /// <summary>항목 전체를 바꾼다. 진행 상태·금액은 id 로 이어지므로 건드리지 않는다.</summary>
@@ -409,7 +439,7 @@ namespace PaymentAlert
                 int n = 0;
                 foreach (PaymentItem it in items)
                 {
-                    c.Run("INSERT INTO items(" + 항목칸 + ",순서) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", 항목값(it, n));
+                    c.Run("INSERT INTO items(" + 항목칸 + ",순서) VALUES(" + 항목자리 + ")", 항목값(it, n));
                     n++;
                 }
                 SetMeta("master_updated_at", DT(DateTime.Now));
@@ -436,15 +466,45 @@ namespace PaymentAlert
                 {
                     long 다음순서 = 0;
                     c.Each("SELECT COALESCE(MAX(순서), -1) + 1 FROM items", delegate(Reader r) { 다음순서 = r.Long(0); });
-                    c.Run("INSERT INTO items(" + 항목칸 + ",순서) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
+                    c.Run("INSERT INTO items(" + 항목칸 + ",순서) VALUES(" + 항목자리 + ") " +
                           "ON CONFLICT(id) DO UPDATE SET 기관=excluded.기관, 비용명=excluded.비용명, " +
                           "진행흐름=excluded.진행흐름, 월=excluded.월, 말일=excluded.말일, 일=excluded.일, " +
                           "알림영업일=excluded.알림영업일, 금액규칙=excluded.금액규칙, 고정금액=excluded.고정금액, 비고=excluded.비고, " +
-                          "홈페이지명=excluded.홈페이지명, 홈페이지주소=excluded.홈페이지주소, 묶음=excluded.묶음",
+                          "홈페이지명=excluded.홈페이지명, 홈페이지주소=excluded.홈페이지주소, 묶음=excluded.묶음, " +
+                          "단계정의=excluded.단계정의, 금액없음=excluded.금액없음",
                         항목값(it, 다음순서));
                 }
                 SetMeta("master_updated_at", DT(DateTime.Now));
             });
+        }
+
+        public const string 아이디접두 = "item-";
+
+        /// <summary>
+        /// 새 항목 id 를 만든다: item-0001, item-0002 …  (ADR-0015)
+        /// 번호는 meta 에 적어 두어 지운 항목의 번호를 다시 쓰지 않는다 — 같은 id 면 옛 기록·금액·증빙이 붙기 때문이다.
+        /// 옛 기록이나 분할 회차(item-0003-05)가 이미 쓰는 번호도 건너뛴다.
+        /// </summary>
+        public string 새항목아이디()
+        {
+            string result = null;
+            c.Tx(delegate
+            {
+                long n;
+                if (!long.TryParse(GetMeta("next_item_no"), NumberStyles.Integer, CultureInfo.InvariantCulture, out n) || n < 1) n = 1;
+                while (true)
+                {
+                    string id = 아이디접두 + n.ToString("0000", CultureInfo.InvariantCulture);
+                    bool used = false;
+                    foreach (string table in new string[] { "items", "status", "amounts", "attachments", "events" })
+                        c.Each("SELECT 1 FROM " + table + " WHERE id=? OR id LIKE ? LIMIT 1",
+                            delegate(Reader r) { used = true; }, id, id + "-%");
+                    n++;
+                    if (!used) { result = id; break; }
+                }
+                SetMeta("next_item_no", n.ToString(CultureInfo.InvariantCulture));
+            });
+            return result;
         }
 
         /// <summary>
@@ -625,12 +685,18 @@ namespace PaymentAlert
         /// <summary>다음 지점으로 한 칸. 오늘 확인한 것으로도 표시한다.</summary>
         public StatusRecord Advance(int 연도, string id, Flow flow, int 기대단계, DateTime 지금, DateTime 오늘, string 출처)
         {
+            return Advance(연도, id, Stages.For(flow), 기대단계, 지금, 오늘, 출처);
+        }
+
+        /// <summary>항목의 단계 목록(사용자설정 포함)으로 한 칸 나아간다.</summary>
+        public StatusRecord Advance(int 연도, string id, string[] 단계들, int 기대단계, DateTime 지금, DateTime 오늘, string 출처)
+        {
             StatusRecord result = null;
             c.Tx(delegate
             {
                 StatusRecord st = LoadStatus(연도, id);
                 확인(st, 기대단계);
-                int last = Stages.FinalIndex(flow);
+                int last = 단계들.Length - 1;
                 if (st.단계 >= last)
                     throw new StageConflictException("이미 마지막 단계까지 끝난 건입니다.", st.단계);
                 int before = st.단계;
@@ -638,7 +704,7 @@ namespace PaymentAlert
                 st.변경일시 = 지금;
                 st.최종확인일 = 오늘.Date;
                 상태쓰기(st);
-                기록(연도, id, "진행", before, st.단계, 출처, Stages.For(flow)[st.단계]);
+                기록(연도, id, "진행", before, st.단계, 출처, 단계들[st.단계]);
                 result = st;
             });
             return result;
@@ -666,12 +732,17 @@ namespace PaymentAlert
         /// </summary>
         public StatusRecord Revert(int 연도, string id, Flow flow, int 기대단계, DateTime 지금, string 출처)
         {
+            return Revert(연도, id, Stages.For(flow), 기대단계, 지금, 출처);
+        }
+
+        public StatusRecord Revert(int 연도, string id, string[] 단계들, int 기대단계, DateTime 지금, string 출처)
+        {
             StatusRecord result = null;
             c.Tx(delegate
             {
                 StatusRecord st = LoadStatus(연도, id);
                 확인(st, 기대단계);
-                int last = Stages.FinalIndex(flow);
+                int last = 단계들.Length - 1;
                 if (st.단계 > last) st.단계 = last;
                 if (st.단계 <= 0)
                     throw new StageConflictException("첫 단계라 되돌릴 수 없습니다.", st.단계);
@@ -680,7 +751,7 @@ namespace PaymentAlert
                 st.변경일시 = 지금;
                 st.최종확인일 = null;
                 상태쓰기(st);
-                기록(연도, id, "되돌리기", before, st.단계, 출처, Stages.For(flow)[before] + " → " + Stages.For(flow)[st.단계]);
+                기록(연도, id, "되돌리기", before, st.단계, 출처, 단계들[before] + " → " + 단계들[st.단계]);
                 result = st;
             });
             return result;

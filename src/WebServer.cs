@@ -597,7 +597,7 @@ namespace PaymentAlert
             {
                 PaymentItem it = env.Item(st.Id);
                 if (it == null || !st.변경일시.HasValue) continue;
-                if (st.단계 < Stages.FinalIndex(it.진행흐름)) continue;
+                if (st.단계 < Stages.FinalIndex(it)) continue;
                 DateTime 처리일 = st.변경일시.Value.Date;
                 if (처리일 < a || 처리일 > b) continue;
 
@@ -687,15 +687,15 @@ namespace PaymentAlert
             int 기대 = -1;
             string s = f["stage"];
             if (!string.IsNullOrEmpty(s) &&
-                (!int.TryParse(s, NumberStyles.None, Inv, out 기대) || 기대 > Stages.FinalIndex(it.진행흐름)))
+                (!int.TryParse(s, NumberStyles.None, Inv, out 기대) || 기대 > Stages.FinalIndex(it)))
                 throw new HttpError(400, "단계 값이 올바르지 않습니다.");
 
             try
             {
                 StatusRecord st;
-                if (동작 == "진행") st = env.Db.Advance(y, it.Id, it.진행흐름, 기대, DateTime.Now, env.Today, 출처);
+                if (동작 == "진행") st = env.Db.Advance(y, it.Id, Stages.For(it), 기대, DateTime.Now, env.Today, 출처);
                 else if (동작 == "대기") st = env.Db.Defer(y, it.Id, 기대, DateTime.Now, env.Today, 출처);
-                else st = env.Db.Revert(y, it.Id, it.진행흐름, 기대, DateTime.Now, 출처);
+                else st = env.Db.Revert(y, it.Id, Stages.For(it), 기대, DateTime.Now, 출처);
                 env.Status[st.Key] = st;
             }
             catch (StageConflictException ce)
@@ -726,10 +726,12 @@ namespace PaymentAlert
         JObj SaveItem(Env env, NameValueCollection f)
         {
             string id = (f["id"] ?? "").Trim();
+            bool 새항목 = f["mode"] == "new";
+
+            // 새 항목은 id 를 비워 보내면 서버가 만든다 (ADR-0015). 한 번 쓴 번호는 지워도 다시 쓰지 않는다.
+            if (새항목 && id.Length == 0) id = env.Db.새항목아이디();
             if (!아이디형식.IsMatch(id))
                 throw new HttpError(400, "id 는 영문·숫자·_·- 로 1~40자여야 합니다.");
-
-            bool 새항목 = f["mode"] == "new";
 
             // 월에 쉼표가 있으면 분할납부 회차를 한꺼번에 만든다 (AC-W32). 회차 수는 월 칸만 정한다 (AC-W42).
             List<int> months = 월목록(f["month"]);
@@ -774,6 +776,23 @@ namespace PaymentAlert
             it.비용명 = 글자(f["name"], "비용명", 60, true);
             try { it.진행흐름 = Stages.Parse(f["flow"]); }
             catch (FormatException ex) { throw new HttpError(400, ex.Message); }
+
+            if (it.진행흐름 == Flow.사용자설정)
+            {
+                // 단계 이름과 버튼 문구는 줄마다 한 칸. 버튼 문구 줄은 이름 줄과 자리가 맞아야 한다.
+                string[] names = 줄목록(f["stages"]);
+                string[] raw = 줄목록(f["actions"]);
+                var acts = new string[names.Length];
+                for (int i = 0; i < names.Length; i++) acts[i] = i < raw.Length ? raw[i].Trim() : "";
+                if (acts.Length > 0) acts[0] = "";
+                for (int i = 0; i < names.Length; i++) names[i] = names[i].Trim();
+                string 문제 = Stages.단계검사(names, acts);
+                if (문제 != null) throw new HttpError(400, 문제);
+                it.사용자단계 = names;
+                it.사용자행동 = acts;
+                string na = (f["noAmount"] ?? "").Trim();
+                it.금액없음 = na == "1" || na == "true";
+            }
 
             it.월 = month;
             string day = (f["day"] ?? "").Trim();
@@ -863,7 +882,7 @@ namespace PaymentAlert
                 }
 
                 StatusRecord st = env.StatusOf(y, it.Id);
-                string[] stages = Stages.For(it.진행흐름);
+                string[] stages = Stages.For(it);
                 int idx = Math.Max(0, Math.Min(st.단계, stages.Length - 1));
                 string 종류 = q["kind"] == Attachment.받은문서 ? Attachment.받은문서 : Attachment.증빙;
                 Attachment a = env.Files.Attach(y, it.Id, stages[idx], tmp, 종류, 출처);
@@ -1036,7 +1055,20 @@ namespace PaymentAlert
                 .Set("siteName", it.홈페이지명 ?? "")
                 .Set("siteUrl", it.홈페이지주소 ?? "")
                 .Set("group", it.묶음 ?? "")
-                .Set("paid", it.납부있음);
+                .Set("paid", it.납부있음)
+                .Set("stages", Stages.For(it))
+                .Set("actions", 행동목록(it))
+                .Set("noAmount", it.진행흐름 == Flow.사용자설정 && it.금액없음);
+        }
+
+        /// <summary>각 지점에 도달할 때 누를 버튼 문구. 첫 칸(시작 지점)은 비어 있다.</summary>
+        static string[] 행동목록(PaymentItem it)
+        {
+            string[] names = Stages.For(it);
+            var list = new string[names.Length];
+            list[0] = "";
+            for (int i = 1; i < names.Length; i++) list[i] = Stages.다음행동(it, i - 1) ?? "";
+            return list;
         }
 
         /// <summary>
@@ -1046,7 +1078,7 @@ namespace PaymentAlert
         static JObj Dto(Env env, Occurrence o, bool 오늘대기)
         {
             PaymentItem it = o.Item;
-            string[] stages = Stages.For(it.진행흐름);
+            string[] stages = Stages.For(it);
             StatusRecord st;
             env.Status.TryGetValue(o.Key, out st);
             int stage = st == null ? 0 : Math.Max(0, Math.Min(st.단계, stages.Length - 1));
@@ -1085,7 +1117,7 @@ namespace PaymentAlert
                 .Set("stage", stage)
                 .Set("stageName", stages[stage])
                 .Set("nextStage", done ? null : stages[stage + 1])
-                .Set("nextAction", done ? Stages.끝남문구 : Stages.다음행동(it.진행흐름, stage))
+                .Set("nextAction", done ? Stages.끝남문구 : Stages.다음행동(it, stage))
                 .Set("paid", it.납부있음)
                 .Set("siteName", it.홈페이지명 ?? "")
                 .Set("siteUrl", it.홈페이지주소 ?? "")
@@ -1122,7 +1154,7 @@ namespace PaymentAlert
         static bool Done(Env env, Occurrence o)
         {
             StatusRecord st;
-            return env.Status.TryGetValue(o.Key, out st) && st.단계 >= Stages.FinalIndex(o.Item.진행흐름);
+            return env.Status.TryGetValue(o.Key, out st) && st.단계 >= Stages.FinalIndex(o.Item);
         }
 
         static decimal? Amount(Occurrence o) { return AmountRules.금액(o); }
@@ -1186,6 +1218,13 @@ namespace PaymentAlert
             if (!int.TryParse((s ?? "").Trim(), NumberStyles.None, Inv, out y) || y < 2000 || y > 2100)
                 throw new HttpError(400, "연도가 올바르지 않습니다.");
             return y;
+        }
+
+        static string[] 줄목록(string s)
+        {
+            string t = (s ?? "").Replace("\r", "");
+            if (t.Trim().Length == 0) return new string[0];
+            return t.Split('\n');
         }
 
         static string 아이디(string s)

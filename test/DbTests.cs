@@ -86,6 +86,7 @@ namespace PaymentAlert.Tests
                 두창이동시에누름();
                 순서옮기기();
                 자료준비();
+                사용자설정흐름();
             }
             catch (Exception ex)
             {
@@ -601,7 +602,7 @@ namespace PaymentAlert.Tests
 
                 using (Store s = Store.Open(p))
                 {
-                    Check("버전이 2 로", s.GetMeta("schema_version"), "2");
+                    Check("최신 판으로", s.GetMeta("schema_version"), Store.스키마버전.ToString());
                     List<PaymentItem> m = s.LoadMaster();
                     Check("항목 수 그대로", m.Count, 6);
                     Func<string, PaymentItem> 찾기 = delegate(string id) { return m.Find(delegate(PaymentItem x) { return x.Id == id; }); };
@@ -638,6 +639,101 @@ namespace PaymentAlert.Tests
                 CheckTrue("더 새 판 파일은 거절", 거절);
             }
             finally { 치우기(dir); }
+        }
+
+        static void 사용자설정흐름()
+        {
+            Console.WriteLine("\n[DB-20] 3판: 사용자설정 흐름 저장·단계 진행, 새 항목 id 자동 생성 (ADR-0015)");
+            string dir = 임시폴더("custom");
+            try
+            {
+                string p = Path.Combine(dir, "v2.db");
+                // 2판 파일: 진행흐름 CHECK 가 세 값뿐인 items 표.
+                using (Store s = Store.Open(p))
+                {
+                    var old = new PaymentItem();
+                    old.Id = "vat"; old.기관 = "세무서"; old.비용명 = "부가세"; old.진행흐름 = Flow.신고납부;
+                    old.월 = 1; old.일 = 25; old.금액규칙 = "변동";
+                    s.UpsertItem(old);
+                }
+                using (var c = new Conn(p))
+                {
+                    c.Run("DROP TABLE items");
+                    c.Run("CREATE TABLE items(id TEXT PRIMARY KEY, 기관 TEXT NOT NULL, 비용명 TEXT NOT NULL, " +
+                          "진행흐름 TEXT NOT NULL CHECK(진행흐름 IN ('신고납부','납부만','제출만')), 월 INTEGER NOT NULL CHECK(월 BETWEEN 1 AND 12), " +
+                          "말일 INTEGER NOT NULL DEFAULT 0, 일 INTEGER NOT NULL DEFAULT 0, 알림영업일 INTEGER NOT NULL DEFAULT 3, " +
+                          "금액규칙 TEXT NOT NULL DEFAULT '', 고정금액 TEXT, 비고 TEXT NOT NULL DEFAULT '', 순서 INTEGER NOT NULL DEFAULT 0, " +
+                          "홈페이지명 TEXT NOT NULL DEFAULT '', 홈페이지주소 TEXT NOT NULL DEFAULT '', 묶음 TEXT NOT NULL DEFAULT '')");
+                    c.Run("INSERT INTO items(id,기관,비용명,진행흐름,월,일,금액규칙,순서,묶음) VALUES('vat','세무서','부가세','신고납부',1,25,'변동',0,'')");
+                    c.Run("INSERT INTO items(id,기관,비용명,진행흐름,월,일,금액규칙,순서,묶음) VALUES('item-0001','기관','옛 항목','납부만',2,5,'변동',1,'')");
+                    c.Run("UPDATE meta SET value='2' WHERE key='schema_version'");
+                }
+
+                using (Store s = Store.Open(p))
+                {
+                    Check("3판으로", s.버전, 3);
+                    List<PaymentItem> m = s.LoadMaster();
+                    Check("옛 항목 그대로", m.Count, 2);
+                    Check("옛 흐름 그대로", m[0].진행흐름, Flow.신고납부);
+                    Check("옛 흐름은 사용자 단계 없음", m[0].사용자단계 == null, true);
+
+                    var it = new PaymentItem();
+                    it.Id = "custom"; it.기관 = "구청"; it.비용명 = "점용료"; it.진행흐름 = Flow.사용자설정;
+                    it.월 = 3; it.일 = 10; it.금액규칙 = "고정"; it.고정금액 = 12000m;
+                    it.사용자단계 = new string[] { "안내 받음", "결재", "이체", "영수증 보관" };
+                    it.사용자행동 = new string[] { "", "결재 올리기", "", "보관하기" };
+                    s.UpsertItem(it);
+
+                    PaymentItem back = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "custom"; });
+                    Check("사용자설정 흐름 저장", back.진행흐름, Flow.사용자설정);
+                    Check("단계 이름 왕복", string.Join("/", Stages.For(back)), "안내 받음/결재/이체/영수증 보관");
+                    Check("버튼 문구 적은 것", Stages.다음행동(back, 0), "결재 올리기");
+                    Check("버튼 문구 비면 지점 이름", Stages.다음행동(back, 1), "이체");
+                    CheckTrue("마지막 뒤 행동 없음", Stages.다음행동(back, 3) == null);
+                    Check("고정금액 보존", back.고정금액, 12000m);
+                    CheckTrue("금액 있는 건", back.납부있음);
+
+                    for (int i = 0; i < 3; i++) s.Advance(2026, "custom", Stages.For(back), i, DateTime.Now, DateTime.Today, "시험");
+                    Check("단계 4개를 끝까지", s.LoadStatus(2026, "custom").단계, 3);
+                    bool 막힘 = false;
+                    try { s.Advance(2026, "custom", Stages.For(back), 3, DateTime.Now, DateTime.Today, "시험"); }
+                    catch (StageConflictException) { 막힘 = true; }
+                    CheckTrue("마지막 뒤로는 못 감", 막힘);
+                    List<StatusEvent> ev = s.LoadEvents(2026, "custom");
+                    CheckTrue("기록에 사용자 지점 이름", ev.Exists(delegate(StatusEvent e) { return e.내용 == "영수증 보관"; }));
+
+                    it.금액없음 = true;
+                    s.UpsertItem(it);
+                    back = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "custom"; });
+                    CheckTrue("금액 없음 저장", !back.납부있음);
+                    CheckTrue("금액 없음이면 고정금액 안 둠", back.고정금액 == null);
+
+                    Check("쓰인 번호는 건너뜀", s.새항목아이디(), "item-0002");
+                    Check("다음 번호", s.새항목아이디(), "item-0003");
+                    s.UpsertItem(Clone(it, "item-0004-05"));
+                    Check("분할 회차가 쓰는 번호도 건너뜀", s.새항목아이디(), "item-0005");
+                    s.DeleteItem("item-0001");
+                    Check("지운 번호를 다시 쓰지 않음", s.새항목아이디(), "item-0006");
+                }
+                using (Store s = Store.Open(p))
+                    Check("다시 열어도 번호 이어짐", s.새항목아이디(), "item-0007");
+
+                CheckTrue("단계 검사: 1개는 거절", Stages.단계검사(new string[] { "하나" }, null) != null);
+                CheckTrue("단계 검사: 9개는 거절", Stages.단계검사(new string[] { "1", "2", "3", "4", "5", "6", "7", "8", "9" }, null) != null);
+                CheckTrue("단계 검사: 빈 이름 거절", Stages.단계검사(new string[] { "a", " " }, null) != null);
+                CheckTrue("단계 검사: 같은 이름 거절", Stages.단계검사(new string[] { "a", "a" }, null) != null);
+                CheckTrue("단계 검사: | 거절", Stages.단계검사(new string[] { "a", "b|c" }, null) != null);
+                CheckTrue("단계 검사: 정상", Stages.단계검사(new string[] { "a", "b" }, new string[] { "", "하기" }) == null);
+            }
+            finally { 치우기(dir); }
+        }
+
+        static PaymentItem Clone(PaymentItem src, string id)
+        {
+            var it = new PaymentItem();
+            it.Id = id; it.기관 = src.기관; it.비용명 = src.비용명; it.진행흐름 = Flow.납부만;
+            it.월 = 5; it.일 = 1; it.금액규칙 = "변동";
+            return it;
         }
 
         static void 단계변경은원자적()

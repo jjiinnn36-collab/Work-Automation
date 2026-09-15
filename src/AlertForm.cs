@@ -19,6 +19,8 @@ namespace PaymentAlert
         public const int 폭 = 340;
         public const int 높이 = 260;
         public const int 오른쪽여백 = 12;
+        /// <summary>접었을 때 높이 — 머리(제목 줄)만 남는다.</summary>
+        public const int 접힌높이 = 44;
         const int 카드폭 = 316;
         const int 카드높이 = 150;
         const int 자동넘김ms = 400;
@@ -116,6 +118,16 @@ namespace PaymentAlert
                 MessageBox.Show(this, warningText, "납부 기한 알림 - 자료 확인", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             };
             Controls.Add(경고);
+
+            // 작은 접기 버튼. 접으면 제목 줄만 작업 표시줄 위에 남고, 다시 누르거나 제목을 누르면 펼친다.
+            접기버튼 = 알약("▾", false, 10);
+            접기버튼.Size = new Size(24, 22);
+            접기버튼.Location = new Point(폭 - 12 - 24, 11);
+            접기버튼.Click += delegate { 접기(!접힘); };
+            Controls.Add(접기버튼);
+            제목.Cursor = Cursors.Hand;
+            제목.Click += delegate { if (접힘) 접기(false); };
+            건수.Click += delegate { if (접힘) 접기(false); };
 
             // ── 카드 ──
             카드 = new CardPanel();
@@ -276,8 +288,35 @@ namespace PaymentAlert
                 둥근모서리 = DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int)) == 0 && Environment.OSVersion.Version.Build >= 22000;
             }
             catch { }
-            if (!둥근모서리)
-                Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, 폭 + 1, 높이 + 1, 24, 24));
+            시스템둥근모서리 = 둥근모서리;
+            모양맞추기();
+        }
+
+        bool 시스템둥근모서리;
+        readonly PillButton 접기버튼;
+
+        void 모양맞추기()
+        {
+            if (시스템둥근모서리 || !IsHandleCreated) return;
+            Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, Width + 1, Height + 1, 24, 24));
+        }
+
+        /// <summary>제목 줄만 남기고 접었는지.</summary>
+        public bool 접힘 { get; private set; }
+
+        /// <summary>
+        /// 접거나 펼친다. 아래 끝은 작업 표시줄에 붙은 채로 두고 높이만 바꾼다 — 자리 고정 규칙 그대로.
+        /// 접어도 닫힌 것이 아니다. 고르지 않은 건이 남아 있으면 계속 떠 있는다.
+        /// </summary>
+        public void 접기(bool 접기)
+        {
+            접힘 = 접기;
+            int bottom = Bounds.Bottom;
+            int h = 접기 ? 접힌높이 : 높이;
+            Bounds = new Rectangle(Left, bottom - h, 폭, h);
+            접기버튼.Text = 접기 ? "▴" : "▾";
+            모양맞추기();
+            Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -325,7 +364,7 @@ namespace PaymentAlert
 
             건수.Text = rows.Count + "건";
             건수.Location = new Point(제목.Right, 13);
-            날짜.Location = new Point(폭 - 16 - 날짜.PreferredWidth, 17);
+            날짜.Location = new Point(접기버튼.Left - 8 - 날짜.PreferredWidth, 17);
             경고.Location = new Point(날짜.Left - 8 - 경고.PreferredWidth, 17);
 
             카드그리기();
@@ -378,7 +417,7 @@ namespace PaymentAlert
             기한.Location = new Point(이름.Right + 4, 35);
 
             // 끝난 단계는 회색, 지금 할 단계는 파랑. 끝난 건은 전부 회색 (ADR-0005).
-            단계점.설정(Stages.For(it.진행흐름), row.Status.단계 + 1, done);
+            단계점.설정(Stages.For(it), row.Status.단계 + 1, done);
 
             카드.띠색 = handled ? Ui.테두리 : (지남 ? Ui.위험 : Ui.강조);
             카드.테두리색 = handled ? Ui.연한선 : Ui.테두리;
@@ -430,7 +469,7 @@ namespace PaymentAlert
         {
             AlertRow row = 현재행();
             if (row.Status.단계 <= 0) return;
-            string[] names = Stages.For(row.Flow);
+            string[] names = row.단계목록;
             string 확인 = string.Format("{0} ({1})\r\n\r\n'{2}' 를 취소하고 '{3}' 까지 끝난 것으로 되돌릴까요?",
                 row.Occ.Item.비용명, row.Occ.Item.기관, names[row.Status.단계], names[row.Status.단계 - 1]);
             if (MessageBox.Show(this, 확인, "되돌리기", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)

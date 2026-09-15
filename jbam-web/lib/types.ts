@@ -1,7 +1,7 @@
 // 서버(src/WebServer*.cs)가 돌려주는 자료 모양. 이름은 서버 JSON 키와 같다.
 
 export type Severity = "overdue" | "soon" | "normal" | "done" | "before"
-export type FlowName = "신고납부" | "납부만" | "제출만"
+export type FlowName = "신고납부" | "납부만" | "제출만" | "사용자설정"
 
 export interface Occurrence {
   year: number
@@ -97,6 +97,12 @@ export interface Item {
   siteUrl: string
   group: string
   paid: boolean
+  /** 지점 이름 (첫 칸 = 시작 지점). 사용자설정 흐름이면 사용자가 정한 것. */
+  stages: string[]
+  /** 각 지점에 도달할 때 누르는 버튼 문구. 첫 칸은 빈 문자열. */
+  actions: string[]
+  /** 사용자설정 흐름에서 금액이 없는 건 */
+  noAmount: boolean
   thisYearAmount: number | null
   thisYearEntered: boolean
   thisYearUnknown: boolean

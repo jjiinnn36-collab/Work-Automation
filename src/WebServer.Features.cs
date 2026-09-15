@@ -191,7 +191,7 @@ namespace PaymentAlert
             foreach (StatusEvent e in list)
             {
                 PaymentItem it = env.Item(e.Id);
-                string[] stages = it != null ? Stages.For(it.진행흐름) : null;
+                string[] stages = it != null ? Stages.For(it) : null;
                 Func<int?, string> 이름 = delegate(int? s)
                 {
                     if (!s.HasValue || stages == null || s.Value < 0 || s.Value >= stages.Length) return null;

@@ -270,9 +270,9 @@ namespace PaymentAlert
                     using (Store s = Store.Open(dbPath))
                     {
                         Occurrence o = row.Occ;
-                        if (동작 == "진행") return s.Advance(o.연도, o.Item.Id, o.Item.진행흐름, row.Status.단계, DateTime.Now, today, "팝업");
+                        if (동작 == "진행") return s.Advance(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, today, "팝업");
                         if (동작 == "대기") return s.Defer(o.연도, o.Item.Id, row.Status.단계, DateTime.Now, today, "팝업");
-                        return s.Revert(o.연도, o.Item.Id, o.Item.진행흐름, row.Status.단계, DateTime.Now, "팝업");
+                        return s.Revert(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, "팝업");
                     }
                 };
                 Application.Run(form);

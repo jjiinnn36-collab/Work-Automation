@@ -185,6 +185,7 @@ namespace PaymentAlert.Tests
                 항목규칙();
                 설정과관리(server);
                 분할납부();
+                자동아이디와사용자흐름();
                 문서와순서와기록(server);
                 느린요청중병렬응답(server);
             }
@@ -589,13 +590,51 @@ namespace PaymentAlert.Tests
             Post("/api/item/delete", "id=r1");
         }
 
+        static void 자동아이디와사용자흐름()
+        {
+            Console.WriteLine("\n[WEB-17] id 자동 생성, 사용자설정 진행흐름 (ADR-0015)");
+            string 공통 = "&org=" + E("구청") + "&name=" + E("점용료") + "&month=3&day=10&rule=" + E("변동");
+
+            Res r = Post("/api/item", "mode=new&id=&flow=" + E("납부만") + 공통);
+            Check("id 없이 추가", r.Status, 200);
+            Has("item- 번호로 만들어짐", r.Text, "\"id\":\"item-");
+            Res r2 = Post("/api/item", "mode=new&flow=" + E("납부만") + 공통);
+            CheckTrue("두 번째는 다른 id", r2.Status == 200 && r2.Text != r.Text);
+            Check("고칠 때 id 없으면 400", Post("/api/item", "mode=edit&id=&flow=" + E("납부만") + 공통).Status, 400);
+            Res g = Post("/api/item", "mode=new&month=" + E("5,6") + "&flow=" + E("납부만") + "&org=a&name=b&day=1");
+            Check("분할납부도 id 없이", g.Status, 200);
+            Has("회차 id 는 번호-월", g.Text, "-05\"");
+
+            string 단계 = "&stages=" + E("안내 받음\n결재\n이체") + "&actions=" + E("\n결재 올리기\n");
+            Check("사용자설정: 단계 1개 거절", Post("/api/item", "mode=new&flow=" + E("사용자설정") + 공통 + "&stages=" + E("하나")).Status, 400);
+            Check("사용자설정: 단계 없이 거절", Post("/api/item", "mode=new&flow=" + E("사용자설정") + 공통).Status, 400);
+            Check("사용자설정: 같은 이름 거절", Post("/api/item", "mode=new&flow=" + E("사용자설정") + 공통 + "&stages=" + E("a\na")).Status, 400);
+            r = Post("/api/item", "mode=new&id=cust&flow=" + E("사용자설정") + 공통 + 단계);
+            Check("사용자설정 저장", r.Status, 200);
+            Has("단계 목록", r.Text, "\"stages\":[\"안내 받음\",\"결재\",\"이체\"]");
+            Has("버튼 문구 (빈 칸은 지점 이름)", r.Text, "\"actions\":[\"\",\"결재 올리기\",\"이체\"]");
+            Has("금액 있는 흐름", r.Text, "\"paid\":true");
+
+            Res y = Get("/api/year?y=2026");
+            Has("연간에 사용자 단계로", y.Text, "\"nextAction\":\"결재 올리기\"");
+            Check("진행", Post("/api/advance", "y=2026&id=cust&stage=0").Status, 200);
+            Check("진행", Post("/api/advance", "y=2026&id=cust&stage=1").Status, 200);
+            Check("마지막 뒤 단계 값은 400", Post("/api/advance", "y=2026&id=cust&stage=3").Status, 400);
+            Check("끝난 건 진행은 409", Post("/api/advance", "y=2026&id=cust&stage=2").Status, 409);
+
+            r = Post("/api/item", "mode=edit&id=cust&flow=" + E("사용자설정") + 공통 + 단계 + "&noAmount=1");
+            Has("금액 없음", r.Text, "\"paid\":false");
+            Has("금액 없음 표시", r.Text, "\"noAmount\":true");
+            Post("/api/item/delete", "id=cust");
+        }
+
         static void 설정과관리(WebServer server)
         {
             Console.WriteLine("\n[WEB-13] 설정: 시작일·인증키·공휴일 갱신·백업·상태 (ADR-0008)");
             Res r = Get("/api/health");
             Check("health 200", r.Status, 200);
             Has("판 번호", r.Text, "\"version\":\"" + AppInfo.버전 + "\"");
-            Has("스키마 2", r.Text, "\"schema\":2");
+            Has("스키마 최신 판", r.Text, "\"schema\":" + Store.스키마버전);
 
             r = Get("/api/settings");
             Check("settings 200", r.Status, 200);

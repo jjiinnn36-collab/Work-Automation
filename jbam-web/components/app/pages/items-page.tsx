@@ -128,7 +128,15 @@ export function ItemsPage() {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell>{it.flow}</TableCell>
+                    <TableCell>
+                      {it.flow === "사용자설정" ? (
+                        <span title={it.stages.join(" → ")}>
+                          사용자설정 <span className="text-muted-foreground">· {it.stages.length}단계</span>
+                        </span>
+                      ) : (
+                        it.flow
+                      )}
+                    </TableCell>
                     <TableCell className="tabular-nums">{it.month}월 {it.day === "말일" ? "말일" : `${it.day}일`}</TableCell>
                     <TableCell className="tabular-nums">{it.lead}영업일</TableCell>
                     <TableCell>

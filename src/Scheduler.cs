@@ -117,7 +117,7 @@ namespace PaymentAlert
                 }
 
                 // 단계 값이 범위를 벗어나면 보정한다. 잘못된 파일 때문에 죽지 않는다.
-                int last = Stages.FinalIndex(occ.Item.진행흐름);
+                int last = Stages.FinalIndex(occ.Item);
                 if (st.단계 < 0) st.단계 = 0;
                 if (st.단계 > last) st.단계 = last;
 

@@ -72,6 +72,20 @@ namespace PaymentAlert.Tests
             Check("첫 장은 기한이 가장 이른 건", form.현재번호, 0);
             Check("건수", form.건수값, 3);
 
+            Console.WriteLine("\n[GUI-3] 접기: 제목 줄만 남고 아래 끝은 작업 표시줄에 붙은 채");
+            int bottom = form.Bounds.Bottom;
+            CheckTrue("처음엔 펼침", !form.접힘);
+            CheckTrue("접기 버튼이 있음", FindButton(form, "▾") != null);
+            form.접기(true);
+            CheckTrue("접힘", form.접힘);
+            Check("접힌 높이", form.Height, AlertForm.접힌높이);
+            Check("아래 끝 그대로", form.Bounds.Bottom, bottom);
+            Check("폭 그대로", form.Width, AlertForm.폭);
+            CheckTrue("펼치기 버튼으로 바뀜", FindButton(form, "▴") != null);
+            form.접기(false);
+            Check("펼친 높이", form.Height, AlertForm.높이);
+            Check("펼쳐도 아래 끝 그대로", form.Bounds.Bottom, bottom);
+
             Console.WriteLine("\n[GUI-2] 넘기기");
             form.이동(1);
             Check("오른쪽으로", form.현재번호, 1);
