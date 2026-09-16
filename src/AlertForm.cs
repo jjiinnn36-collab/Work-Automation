@@ -50,6 +50,12 @@ namespace PaymentAlert
         readonly PillButton 되돌리기;
         readonly Label 처리표시;
         readonly PageDots 점;
+        // 바닥 넘기기 줄과 밀기 움직임 (ADR-0017)
+        readonly Panel 넘기기줄;
+        readonly PillButton 이전버튼;
+        readonly PillButton 다음버튼;
+        readonly NextLine 미리보기;
+        readonly SlideOverlay 슬라이드;
         // 다 고른 뒤
         readonly Panel 완료판;
         readonly Label 완료제목;
@@ -62,7 +68,7 @@ namespace PaymentAlert
         bool 완료보기;
 
         const int 머리높이 = 44;
-        const int 점y = 머리높이 + 146;
+        const int 줄높이 = 32;
         static readonly Font 위치글꼴 = Ui.글꼴(12);
         static readonly Font 건수글꼴 = Ui.글꼴(13, true);
 
@@ -154,7 +160,7 @@ namespace PaymentAlert
             본문 = new Panel();
             본문.BackColor = Ui.캔버스;
             본문.Location = new Point(0, 머리높이);
-            본문.Size = new Size(폭, 높이 - 머리높이);
+            본문.Size = new Size(폭, 높이 - 머리높이 - 줄높이);
             Controls.Add(본문);
 
             이름 = 라벨("", 19, true, Ui.잉크);
@@ -249,13 +255,51 @@ namespace PaymentAlert
             웹보기.Click += delegate { if (웹열기 != null) 웹열기(); };
             완료판.Controls.Add(웹보기);
 
-            // ── 넘기기 점: 본문·완료판 위에 둔다 (완료 뒤에도 점을 눌러 다시 볼 수 있게) ──
+            // ── 넘기기 줄 (바닥 32px): ‹ 다음 · 이름 · 기한  ●○○○ › (ADR-0017) ──
+            // 누를 곳은 ‹ › 와 가운데 줄 전체. 점은 위치 표시일 뿐 누르지 않는다(7px 는 너무 작다).
+            넘기기줄 = new Panel();
+            넘기기줄.BackColor = Ui.캔버스;
+            넘기기줄.Bounds = new Rectangle(0, 높이 - 줄높이, 폭, 줄높이);
+            넘기기줄.Paint += delegate(object s, PaintEventArgs e)
+            {
+                using (var pen = new Pen(Ui.연한선)) e.Graphics.DrawLine(pen, 0, 0, 폭, 0);
+            };
+            Controls.Add(넘기기줄);
+
+            이전버튼 = 알약("‹", false, 16);
+            이전버튼.글자형 = true;
+            이전버튼.ForeColor = Ui.잉크;
+            이전버튼.Size = new Size(32, 26);
+            이전버튼.Location = new Point(8, 3);
+            이전버튼.Click += delegate { 넘기기(-1); };
+            넘기기줄.Controls.Add(이전버튼);
+
+            다음버튼 = 알약("›", false, 16);
+            다음버튼.글자형 = true;
+            다음버튼.ForeColor = Ui.잉크;
+            다음버튼.Size = new Size(32, 26);
+            다음버튼.Location = new Point(폭 - 8 - 32, 3);
+            다음버튼.Click += delegate { 넘기기(1); };
+            넘기기줄.Controls.Add(다음버튼);
+
             점 = new PageDots();
             점.처리됨 = delegate(int i) { return rows[i].오늘처리됨(today); };
             점.지남 = delegate(int i) { return rows[i].Occ.남은영업일(cal, today) < 0; };
-            점.눌림 += delegate(int i) { 이동(i); };
-            Controls.Add(점);
-            점.BringToFront();
+            점.누를수있음 = false;
+            넘기기줄.Controls.Add(점);
+
+            미리보기 = new NextLine();
+            미리보기.Bounds = new Rectangle(이전버튼.Right + 2, 3, 200, 26);
+            미리보기.Click += delegate { 넘기기(1); };
+            넘기기줄.Controls.Add(미리보기);
+
+            풍선.SetToolTip(이전버튼, "이전 건 (←)");
+            풍선.SetToolTip(다음버튼, "다음 건 (→)");
+
+            // 넘길 때 카드가 밀려나고 들어오는 그림 층. 본문 자리만 덮는다(머리·넘기기 줄은 그대로).
+            슬라이드 = new SlideOverlay();
+            슬라이드.Bounds = 본문.Bounds;
+            Controls.Add(슬라이드);
 
             넘김타이머 = new Timer();
             넘김타이머.Interval = 자동넘김ms;
@@ -486,9 +530,10 @@ namespace PaymentAlert
         public void 이동(int i)
         {
             if (rows.Count == 0) return;
-            index = Math.Max(0, Math.Min(rows.Count - 1, i));
-            완료보기 = false;
-            RefreshState();
+            int t = Math.Max(0, Math.Min(rows.Count - 1, i));
+            // 뒤쪽 건이면 왼쪽으로, 앞쪽 건이면 오른쪽으로 민다. 완료 장에서 카드로 돌아갈 때도 오른쪽으로.
+            int 방향 = 완료보기 ? -1 : Math.Sign(t - index);
+            전환(delegate { index = t; 완료보기 = false; RefreshState(); }, 방향);
         }
 
         /// <summary>from 다음부터 한 바퀴 돌며 아직 안 고른 건을 찾는다. 없으면 -1.</summary>
@@ -554,8 +599,7 @@ namespace PaymentAlert
         {
             int n = 다음남은건(index);
             if (n >= 0) { 이동(n); return; }
-            완료보기 = true;
-            RefreshState();
+            전환(delegate { 완료보기 = true; RefreshState(); }, 1);
         }
 
         /// <summary>단계 진행/대기/되돌리기 후 화면 전체를 다시 그린다.</summary>
@@ -573,14 +617,49 @@ namespace PaymentAlert
             if (완료) 완료그리기();
             else 카드그리기();
 
-            점.설정(rows.Count, 완료 ? -1 : index);
-            점.Location = new Point((폭 - 점.Width) / 2, 점y);
             bool 여러건 = rows.Count > 1;
             점보임값 = 여러건;
-            점.Visible = 여러건;
+            넘기기줄.Visible = 여러건;
+            넘기기줄그리기(완료);
 
             Ui.버튼활성(closeButton, 남음 == 0);
         }
+
+        void 넘기기줄그리기(bool 완료)
+        {
+            점.설정(rows.Count, 완료 ? -1 : index);
+            점.Location = new Point(다음버튼.Left - 6 - 점.Width, (줄높이 - 점.Height) / 2);
+            미리보기.Width = Math.Max(40, 점.Left - 8 - 미리보기.Left);
+
+            bool 이전됨 = 완료 || index > 0;
+            bool 다음됨 = !완료 && index < rows.Count - 1;
+            Ui.버튼활성(이전버튼, 이전됨);
+            Ui.버튼활성(다음버튼, 다음됨);
+            미리보기.Enabled = 다음됨;
+            if (완료) 미리보기.설정("", "", rows.Count + "건 모두 골랐습니다");
+            else if (다음됨)
+            {
+                AlertRow n = rows[index + 1];
+                미리보기.설정("다음", n.Occ.Item.비용명, " · " + 짧은상태(n));
+            }
+            else 미리보기.설정("", "", "마지막 건입니다");
+        }
+
+        /// <summary>미리보기 줄에 쓰는 짧은 상태: D-2 · 오늘 기한 · 5일 지남 · 내일 다시 · 처리함 · 모두 끝남.</summary>
+        string 짧은상태(AlertRow r)
+        {
+            if (r.최종단계도달) return "모두 끝남";
+            if (r.오늘처리됨(today)) return r.오늘단계변경 ? "처리함" : "내일 다시";
+            int 남은 = r.Occ.남은영업일(cal, today);
+            if (남은 > 0) return "D-" + 남은;
+            if (남은 == 0) return "오늘 기한";
+            return (-남은) + "일 지남";
+        }
+
+        /// <summary>바닥 넘기기 줄의 문구와 ‹ › 상태 (시험용).</summary>
+        public string 미리보기문구 { get { return 미리보기.문구; } }
+        public bool 이전가능 { get { return 이전버튼.Enabled; } }
+        public bool 다음가능 { get { return 다음버튼.Enabled; } }
 
         void 머리그리기()
         {
@@ -825,25 +904,118 @@ namespace PaymentAlert
 
         // ══ 끌어 넘기기·키보드·닫기 ══════════════════════════════
 
+        // ── 끌기: 카드가 손을 따라오고, 80px 또는 빠르게 튕기면 넘어간다 (ADR-0017) ──
         int 끌기시작 = int.MinValue;
+        bool 끄는중;
 
         void 끌기연결(Control c)
         {
-            c.MouseDown += delegate(object s, MouseEventArgs e) { if (e.Button == MouseButtons.Left) 끌기시작 = Cursor.Position.X; };
+            c.Cursor = Cursors.SizeWE;
+            c.MouseDown += delegate(object s, MouseEventArgs e)
+            {
+                if (e.Button != MouseButtons.Left) return;
+                끌기시작 = Cursor.Position.X;
+                끄는중 = false;
+            };
+            c.MouseMove += delegate(object s, MouseEventArgs e)
+            {
+                if (끌기시작 == int.MinValue || (e.Button & MouseButtons.Left) == 0) return;
+                int dx = Cursor.Position.X - 끌기시작;
+                if (!끄는중)
+                {
+                    if (Math.Abs(dx) < 6 || !움직임가능 || rows.Count < 2 || 완료보기 || 슬라이드.도는중) return;
+                    끄는중 = true;
+                    슬라이드.끌기시작(
+                        index > 0 ? 카드모습(index - 1) : null,
+                        카드모습(index),
+                        index < rows.Count - 1 ? 카드모습(index + 1) : null);
+                }
+                슬라이드.끌기(dx);
+            };
             c.MouseUp += delegate(object s, MouseEventArgs e)
             {
                 if (끌기시작 == int.MinValue) return;
                 int dx = Cursor.Position.X - 끌기시작;
                 끌기시작 = int.MinValue;
+                if (끄는중)
+                {
+                    끄는중 = false;
+                    슬라이드.놓기(null, delegate(int r)
+                    {
+                        if (r != 0) { index += r; 완료보기 = false; RefreshState(); }
+                    });
+                    return;
+                }
+                // 움직임을 못 쓰는 환경: 예전처럼 놓는 순간 넘긴다.
+                if (움직임가능) return;
                 if (dx <= -40) 이동(index + 1);
                 else if (dx >= 40) 이동(index - 1);
             };
         }
 
+        /// <summary>i 번째 건 카드의 모습을 그림으로 뜬다. 화면에는 그리지 않는다(덮개가 가리고 있음).</summary>
+        Bitmap 카드모습(int i)
+        {
+            int 원래 = index;
+            index = i;
+            카드그리기();
+            var bmp = new Bitmap(본문.Width, 본문.Height);
+            본문.DrawToBitmap(bmp, new Rectangle(0, 0, 본문.Width, 본문.Height));
+            index = 원래;
+            카드그리기();
+            return bmp;
+        }
+
+        /// <summary>지금 보이는 판(카드 또는 완료 장)의 모습.</summary>
+        Bitmap 지금모습()
+        {
+            Panel p = 완료보기 ? 완료판 : 본문;
+            var bmp = new Bitmap(p.Width, p.Height);
+            p.DrawToBitmap(bmp, new Rectangle(0, 0, p.Width, p.Height));
+            return bmp;
+        }
+
+        /// <summary>창이 보이고 Windows 화면 효과가 켜져 있으며 펼친 상태일 때만 움직인다.</summary>
+        bool 움직임가능
+        {
+            get { return Visible && IsHandleCreated && !접힘 && SystemInformation.UIEffectsEnabled; }
+        }
+
+        /// <summary>
+        /// 화면을 바꾸는 일을 밀기 움직임으로 감싼다. 방향 +1 = 다음 쪽(왼쪽으로 밀림), -1 = 이전 쪽, 0 = 움직임 없음.
+        /// </summary>
+        void 전환(Action 바꾸기, int 방향)
+        {
+            if (슬라이드.도는중) 슬라이드.단계(1);
+            if (방향 == 0 || !움직임가능)
+            {
+                바꾸기();
+                return;
+            }
+            Bitmap 옛 = 지금모습();
+            바꾸기();
+            Bitmap 새 = 지금모습();
+            슬라이드.전환(옛, 새, 방향, null);
+        }
+
+        /// <summary>‹ › 와 다음 줄, 방향키. 완료 장에서 ‹ 는 마지막으로 보던 카드로 돌아간다.</summary>
+        public void 넘기기(int 방향)
+        {
+            if (rows.Count == 0) return;
+            if (완료보기)
+            {
+                if (방향 < 0) 전환(delegate { 완료보기 = false; RefreshState(); }, -1);
+                return;
+            }
+            int t = index + 방향;
+            if (t < 0 || t >= rows.Count) return;   // 처음·끝에서는 멈춘다
+            이동(t);
+        }
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (keyData == Keys.Right) { 이동(index + 1); return true; }
-            if (keyData == Keys.Left) { 이동(index - 1); return true; }
+            if (keyData == Keys.Right) { 넘기기(1); return true; }
+            if (keyData == Keys.Left) { 넘기기(-1); return true; }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -962,6 +1134,10 @@ namespace PaymentAlert
 
         public bool 글자로 { get { return count > 12; } }
 
+        bool _누를수있음 = true;
+        /// <summary>false 면 위치 표시만 한다 (누르지 않음, 손 모양 커서 없음).</summary>
+        public bool 누를수있음 { get { return _누를수있음; } set { _누를수있음 = value; Cursor = value ? Cursors.Hand : Cursors.Default; } }
+
         public void 설정(int count, int current)
         {
             this.count = count;
@@ -1025,7 +1201,7 @@ namespace PaymentAlert
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
-            if (글자로 || 눌림 == null) return;
+            if (글자로 || 눌림 == null || !_누를수있음) return;
             for (int i = 0; i < count; i++)
             {
                 int w = i == current ? 긴폭 : 지름;

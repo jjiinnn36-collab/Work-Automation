@@ -180,6 +180,224 @@ namespace PaymentAlert
     }
 
     /// <summary>
+    /// 팝업 바닥의 "다음 · 이름 · 기한" 한 줄 (ADR-0017). 줄 전체를 누를 수 있고, 올리면 옅은 바탕.
+    /// 앞말·뒷말은 흐리게, 이름은 굵게 — 한 Label 로는 섞을 수 없어 직접 그린다.
+    /// </summary>
+    class NextLine : Control
+    {
+        string 앞, 이름, 뒤;
+        bool 올림;
+        static readonly Font 보통글꼴 = Ui.글꼴(12);
+        static readonly Font 굵은글꼴 = Ui.글꼴(12, true);
+
+        public NextLine()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                     | ControlStyles.ResizeRedraw | ControlStyles.UserPaint
+                     | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+            Cursor = Cursors.Hand;
+            앞 = 이름 = 뒤 = "";
+        }
+
+        public void 설정(string 앞말, string 이름말, string 뒷말)
+        {
+            앞 = 앞말 ?? ""; 이름 = 이름말 ?? ""; 뒤 = 뒷말 ?? "";
+            Invalidate();
+        }
+
+        public string 문구 { get { return (앞 + (앞.Length > 0 && 이름.Length > 0 ? " " : "") + 이름 + 뒤).Trim(); } }
+
+        protected override void OnMouseEnter(EventArgs e) { 올림 = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { 올림 = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnEnabledChanged(EventArgs e) { Cursor = Enabled ? Cursors.Hand : Cursors.Default; Invalidate(); base.OnEnabledChanged(e); }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            if (올림 && Enabled)
+                using (var br = new SolidBrush(Ui.양피지))
+                using (var p = new GraphicsPath())
+                {
+                    var r = new Rectangle(0, 2, Width - 1, Height - 5);
+                    int d = 8;
+                    p.AddArc(r.X, r.Y, d, d, 180, 90); p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+                    p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+                    p.CloseFigure();
+                    g.FillPath(br, p);
+                }
+            const TextFormatFlags f = TextFormatFlags.NoPadding | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis;
+            int x = 6;
+            Color 흐림 = Enabled ? Ui.흐린글씨 : Ui.아주흐림;
+            if (앞.Length > 0)
+            {
+                TextRenderer.DrawText(g, 앞, 보통글꼴, new Rectangle(x, 0, Width - x, Height), 흐림, f);
+                x += TextRenderer.MeasureText(g, 앞, 보통글꼴, Size.Empty, TextFormatFlags.NoPadding).Width + 5;
+            }
+            if (이름.Length > 0)
+            {
+                int 뒤폭 = TextRenderer.MeasureText(g, 뒤, 보통글꼴, Size.Empty, TextFormatFlags.NoPadding).Width;
+                int 이름폭 = Math.Min(TextRenderer.MeasureText(g, 이름, 굵은글꼴, Size.Empty, TextFormatFlags.NoPadding).Width,
+                                     Math.Max(20, Width - x - 뒤폭 - 4));
+                TextRenderer.DrawText(g, 이름, 굵은글꼴, new Rectangle(x, 0, 이름폭, Height), Ui.잉크, f);
+                x += 이름폭;
+            }
+            if (뒤.Length > 0)
+                TextRenderer.DrawText(g, 뒤, 보통글꼴, new Rectangle(x, 0, Math.Max(0, Width - x), Height), 흐림, f);
+        }
+    }
+
+    /// <summary>
+    /// 건을 넘길 때 카드가 밀려나고 들어오는 움직임 (ADR-0017).
+    /// 카드 모습을 그림으로 떠서 덮어 그린다 — WinForms 컨트롤을 직접 옮기면 깜빡이고 느리다.
+    /// 위치 = 지금 카드의 x. 이전 카드는 위치-폭, 다음 카드는 위치+폭에 그린다.
+    /// </summary>
+    class SlideOverlay : Control
+    {
+        Bitmap 이전, 지금, 다음;
+        double 시작, 목표;
+        System.Diagnostics.Stopwatch 시계;
+        readonly Timer 타이머;
+        int 결과;
+        Action<int> 끝;
+        double 마지막dx, 속도;
+        long 마지막때;
+
+        public const int 기본ms = 220;
+        public const int 넘김거리 = 80;       // 이만큼 끌면 넘어간다
+        public const double 튕김속도 = 0.5;   // px/ms — 이보다 빠르게 놓으면 넘어간다
+        int 걸리는ms = 기본ms;
+
+        public double 위치 { get; private set; }
+        public bool 도는중 { get { return 타이머.Enabled; } }
+        public bool 끄는중 { get; private set; }
+
+        public SlideOverlay()
+        {
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                     | ControlStyles.UserPaint | ControlStyles.Opaque, true);
+            Visible = false;
+            타이머 = new Timer();
+            타이머.Interval = 10;
+            타이머.Tick += delegate { 단계(시계.ElapsedMilliseconds / (double)걸리는ms); };
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { 타이머.Dispose(); 그림비우기(); }
+            base.Dispose(disposing);
+        }
+
+        void 그림비우기()
+        {
+            if (이전 != null) 이전.Dispose();
+            if (지금 != null) 지금.Dispose();
+            if (다음 != null) 다음.Dispose();
+            이전 = 지금 = 다음 = null;
+        }
+
+        /// <summary>옛 카드에서 새 카드로 민다. 방향 +1 = 새 카드가 오른쪽에서, -1 = 왼쪽에서.</summary>
+        public void 전환(Bitmap 옛, Bitmap 새, int 방향, Action<int> 끝나면)
+        {
+            그림비우기();
+            지금 = 옛;
+            if (방향 > 0) 다음 = 새; else 이전 = 새;
+            위치 = 0;
+            결과 = 방향 > 0 ? 1 : -1;
+            끝 = 끝나면;
+            움직이기(방향 > 0 ? -Width : Width);
+        }
+
+        /// <summary>끌기 시작: 이전·다음 카드가 없으면 null (끝에서는 버틴다).</summary>
+        public void 끌기시작(Bitmap 앞카드, Bitmap 이카드, Bitmap 뒷카드)
+        {
+            타이머.Stop();
+            그림비우기();
+            이전 = 앞카드; 지금 = 이카드; 다음 = 뒷카드;
+            위치 = 0; 속도 = 0; 마지막dx = 0; 마지막때 = Environment.TickCount;
+            끄는중 = true;
+            Visible = true;
+            BringToFront();
+            Invalidate();
+        }
+
+        /// <summary>누른 곳에서 dx 만큼 끌었다. 넘어갈 카드가 없는 쪽이면 1/3 만 따라온다.</summary>
+        public void 끌기(double dx)
+        {
+            long now = Environment.TickCount;
+            long dt = Math.Max(1, now - 마지막때);
+            속도 = (dx - 마지막dx) / dt;
+            마지막dx = dx; 마지막때 = now;
+            bool 막힘 = (dx > 0 && 이전 == null) || (dx < 0 && 다음 == null);
+            위치 = 막힘 ? dx / 3 : dx;
+            Invalidate();
+            Update();
+        }
+
+        /// <summary>
+        /// 손을 뗐다. 넘어가면 +1(다음)/-1(이전), 제자리면 0 을 돌려주고 그쪽으로 마저 움직인다.
+        /// 끝나면 끝나면(결과) 을 부른다.
+        /// </summary>
+        public int 놓기(double? 놓는속도, Action<int> 끝나면)
+        {
+            double v = 놓는속도.HasValue ? 놓는속도.Value : 속도;
+            끄는중 = false;
+            int r = 0;
+            if ((위치 <= -넘김거리 || v < -튕김속도) && 다음 != null) r = 1;
+            else if ((위치 >= 넘김거리 || v > 튕김속도) && 이전 != null) r = -1;
+            결과 = r;
+            끝 = 끝나면;
+            움직이기(r == 1 ? -Width : r == -1 ? Width : 0);
+            return r;
+        }
+
+        void 움직이기(double 도착)
+        {
+            시작 = 위치;
+            목표 = 도착;
+            // 남은 거리에 비례해 짧게 — 거의 다 끌어 놓았으면 금방 끝난다.
+            double 비율 = Width > 0 ? Math.Abs(목표 - 시작) / Width : 1;
+            걸리는ms = (int)Math.Max(90, 기본ms * Math.Min(1, 비율 + 0.2));
+            Visible = true;
+            BringToFront();
+            시계 = System.Diagnostics.Stopwatch.StartNew();
+            타이머.Start();
+            Invalidate();
+        }
+
+        /// <summary>t(0~1) 지점으로 맞춘다. 1 이상이면 끝낸다 (시험에서도 부른다).</summary>
+        public void 단계(double t)
+        {
+            double e = AlertForm.부드럽게(t);
+            위치 = 시작 + (목표 - 시작) * e;
+            if (t >= 1)
+            {
+                타이머.Stop();
+                위치 = 목표;
+                Action<int> k = 끝;
+                끝 = null;
+                if (k != null) k(결과);
+                Visible = false;
+                그림비우기();
+                return;
+            }
+            Invalidate();
+            Update();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.Clear(Ui.캔버스);
+            int x = (int)Math.Round(위치);
+            if (지금 != null) g.DrawImageUnscaled(지금, x, 0);
+            if (이전 != null) g.DrawImageUnscaled(이전, x - Width, 0);
+            if (다음 != null) g.DrawImageUnscaled(다음, x + Width, 0);
+        }
+    }
+
+    /// <summary>
     /// 가는 막대로 그린 진행 표시 (팝업 시안 v5, ADR-0016). 단계마다 한 칸, 끝낸 칸은 짙게.
     /// 단계 이름은 싣지 않는다 — 다음 할 일은 버튼이 말하고, 이름은 풍선(설명)으로 본다.
     /// </summary>

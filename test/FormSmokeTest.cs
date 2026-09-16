@@ -95,6 +95,18 @@ namespace PaymentAlert.Tests
             return (bool)m.Invoke(c, new object[] { 0x00000002 });   // STATE_VISIBLE
         }
 
+        /// <summary>중첩 패널 안까지 뒤져 T 형 컨트롤을 처음 하나 찾는다.</summary>
+        static T 찾기<T>(Control root) where T : Control
+        {
+            foreach (Control c in root.Controls)
+            {
+                if (c is T) return (T)c;
+                T found = 찾기<T>(c);
+                if (found != null) return found;
+            }
+            return null;
+        }
+
         /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
         static Button FindButton(Control root, string text)
         {
@@ -256,7 +268,7 @@ namespace PaymentAlert.Tests
 
             Console.WriteLine("\n[GUI-2] 점 상태");
             PageDots dots = null;
-            foreach (Control ctl in form.Controls) if (ctl is PageDots) dots = (PageDots)ctl;
+            dots = 찾기<PageDots>(form);
             CheckTrue("점이 있음", dots != null);
             Check("지금 보는 건이 기한 지남 → 길쭉한 점 (색은 흑백, 빨강은 상태 글에)", dots.상태(0), "현재-지남");
             Check("아직 안 고른 건 → 빈 점", dots.상태(1), "남음");
@@ -277,6 +289,25 @@ namespace PaymentAlert.Tests
             Check("남은 건 없음 → -1", form.다음남은건(0), -1);
             Check("다 고르면 닫기 켜짐", close.Enabled, true);
 
+            Console.WriteLine("\n[GUI-10] 바닥 넘기기 줄: ‹ 다음 미리보기 › (ADR-0017)");
+            form.이동(2);
+            Check("마지막 카드로", form.현재번호, 2);
+            Check("마지막 건 안내", form.미리보기문구, "마지막 건입니다");
+            CheckTrue("마지막에서 › 꺼짐, ‹ 켜짐", !form.다음가능 && form.이전가능);
+            form.넘기기(1);
+            Check("끝에서는 넘어가지 않음 (한 바퀴 돌지 않음)", form.현재번호, 2);
+            form.이동(0);
+            CheckTrue("처음에서 ‹ 꺼짐, › 켜짐", !form.이전가능 && form.다음가능);
+            CheckTrue("미리보기는 다음 건 이름", form.미리보기문구.StartsWith("다음 " + rows[1].Occ.Item.비용명));
+            CheckTrue("다음 건이 고른 건이면 그 상태", form.미리보기문구.EndsWith("처리함"));
+            form.넘기기(-1);
+            Check("처음에서 ‹ 는 그대로", form.현재번호, 0);
+            form.넘기기(1);
+            Check("› 로 한 칸", form.현재번호, 1);
+            CheckTrue("다음 건이 대기한 건이면 '내일 다시'", form.미리보기문구.EndsWith("내일 다시"));
+            form.이동(2);
+            CheckTrue("점은 위치 표시만 (누르지 않음)", !dots.누를수있음);
+
             Console.WriteLine("\n[GUI-9] 다 고르면 잠깐 뒤 완료 장");
             CheckTrue("고른 직후에는 아직 카드", !form.완료보임);
             form.넘김실행();
@@ -285,6 +316,13 @@ namespace PaymentAlert.Tests
             Check("완료 장 머리는 전체 건수", form.위치문구, "3건");
             CheckTrue("완료 장에서도 점은 보임 (눌러서 다시 보기)", form.점보임);
             Check("완료 장에서는 '지금' 점이 없음", dots.상태(1), "처리됨");
+            Check("완료 장 미리보기 줄", form.미리보기문구, "3건 모두 골랐습니다");
+            CheckTrue("완료 장에서 ‹ 켜짐, › 꺼짐", form.이전가능 && !form.다음가능);
+            int 보던 = form.현재번호;
+            form.넘기기(-1);
+            CheckTrue("완료 장에서 ‹ 는 보던 카드로", !form.완료보임 && form.현재번호 == 보던);
+            form.넘김실행();
+            CheckTrue("다시 완료 장", form.완료보임);
             form.이동(1);
             CheckTrue("점을 누르면 카드로 돌아감", !form.완료보임);
             rows[1].Status.단계 = 0; rows[1].오늘단계변경 = false; rows[1].Status.최종확인일 = null;
@@ -305,10 +343,60 @@ namespace PaymentAlert.Tests
             var big = new AlertForm(many, null, cal, today, null, store);
             big.CreateControl();
             PageDots d2 = null;
-            foreach (Control ctl in big.Controls) if (ctl is PageDots) d2 = (PageDots)ctl;
+            d2 = 찾기<PageDots>(big);
             CheckTrue("15건이면 'n / 15' 글자", d2.글자로);
             CheckTrue("점 줄이 창 폭 안", d2.Width < AlertForm.폭 - 80);
             big.Dispose();
+        }
+
+        /// <summary>밀기 움직임 (ADR-0017): 전환·끌기·되돌아오기·끝에서 버티기.</summary>
+        static void 밀기()
+        {
+            Console.WriteLine("\n[GUI-11] 밀기 움직임");
+            var s = new SlideOverlay();
+            s.Size = new Size(340, 136);
+            int 끝결과 = 99, 불림 = 0;
+            s.전환(new Bitmap(340, 136), new Bitmap(340, 136), 1, delegate(int r) { 끝결과 = r; 불림++; });
+            CheckTrue("다음 쪽 전환 시작: 위치 0, 도는 중", s.위치 == 0 && s.도는중);
+            s.단계(0.5);
+            CheckTrue("중간: 왼쪽으로 밀리는 중 (-340 < 위치 < 0)", s.위치 < 0 && s.위치 > -340);
+            s.단계(1);
+            CheckTrue("끝: 한 폭 밀리고 멈춤", s.위치 == -340 && !s.도는중);
+            CheckTrue("끝 알림 한 번, 결과 +1", 불림 == 1 && 끝결과 == 1);
+            s.전환(new Bitmap(340, 136), new Bitmap(340, 136), -1, null);
+            s.단계(0.5);
+            CheckTrue("이전 쪽은 오른쪽으로", s.위치 > 0);
+            s.단계(1);
+
+            Console.WriteLine("\n[GUI-11] 끌기");
+            s.끌기시작(null, new Bitmap(340, 136), new Bitmap(340, 136));
+            CheckTrue("끄는 중", s.끄는중);
+            s.끌기(-50);
+            Check("다음 쪽은 손을 그대로 따라옴", s.위치, -50d);
+            s.끌기(90);
+            Check("이전 카드가 없는 쪽은 1/3 만 (버티기)", s.위치, 30d);
+            s.끌기(-50);
+            Check("짧게 끌고 놓으면 제자리", s.놓기(0, null), 0);
+            s.단계(1);
+            Check("제자리 복귀", s.위치, 0d);
+
+            s.끌기시작(new Bitmap(340, 136), new Bitmap(340, 136), new Bitmap(340, 136));
+            s.끌기(-85);
+            int 결과 = 99;
+            Check("80px 넘게 끌면 다음으로", s.놓기(0, delegate(int r) { 결과 = r; }), 1);
+            s.단계(1);
+            CheckTrue("끝나면 -폭 위치, 결과 알림 +1", s.위치 == -340 && 결과 == 1);
+
+            s.끌기시작(new Bitmap(340, 136), new Bitmap(340, 136), new Bitmap(340, 136));
+            s.끌기(20);
+            Check("짧아도 빠르게 튕기면 이전으로", s.놓기(0.8, null), -1);
+            s.단계(1);
+
+            s.끌기시작(new Bitmap(340, 136), new Bitmap(340, 136), null);
+            s.끌기(-200);
+            Check("다음 카드가 없으면 멀리 끌어도 제자리", s.놓기(-2, null), 0);
+            s.단계(1);
+            s.Dispose();
         }
 
         [STAThread]
@@ -382,6 +470,7 @@ namespace PaymentAlert.Tests
 
             코너팝업(cal, master, store);
             버튼공통();
+            밀기();
 
             Console.WriteLine("\n" + new string('=', 50));
             Console.WriteLine(string.Format("  통과 {0}건 / 실패 {1}건", passed, failed));
