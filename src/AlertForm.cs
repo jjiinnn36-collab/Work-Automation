@@ -199,6 +199,7 @@ namespace PaymentAlert
 
             메뉴 = new ContextMenuStrip();
             메뉴.Font = Ui.글꼴(12);
+            Ui.메뉴꾸미기(메뉴);
             더보기 = 알약("⋯", false, 13);
             더보기.Size = new Size(40, 28);
             더보기.Click += delegate { 메뉴채우기(); 메뉴.Show(더보기, new Point(0, 더보기.Height)); };
@@ -562,7 +563,11 @@ namespace PaymentAlert
                     try { 열기시도("http://localhost:" + File.ReadAllText(port).Trim() + "/#alerts"); } catch { }
                 });
             }
+            Ui.메뉴항목정리(메뉴);
         }
+
+        /// <summary>⋯ 버튼의 메뉴 (시험용).</summary>
+        public ContextMenuStrip 더보기메뉴 { get { return 메뉴; } }
 
         void 열기시도(string target)
         {

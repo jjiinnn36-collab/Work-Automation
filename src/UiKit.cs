@@ -2,6 +2,7 @@ using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace PaymentAlert
@@ -71,6 +72,41 @@ namespace PaymentAlert
             b.주요 = 주요;
             b.Font = 글꼴(14, true);
             b.ForeColor = 주요 ? 캔버스 : 잉크;
+        }
+
+        // ── 컨텍스트 메뉴 ──
+        // Windows 기본 메뉴는 각진 사각 테두리·회색 아이콘 여백 띠라 둥근 팝업과 따로 논다.
+        // 흰 바탕·연한 테두리·둥근 선택 강조로 직접 그리고, Windows 11 에서는 창 모서리도 둥글게 한다.
+
+        [DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        public static void 메뉴꾸미기(ContextMenuStrip m)
+        {
+            var 그리기 = new 메뉴그리기();
+            m.Renderer = 그리기;
+            m.ShowImageMargin = false;
+            m.ShowCheckMargin = false;
+            m.BackColor = 캔버스;
+            m.ForeColor = 잉크;
+            m.Padding = new Padding(2, 4, 2, 4);
+            m.HandleCreated += delegate
+            {
+                try
+                {
+                    int small = 3;   // DWMWCP_ROUNDSMALL
+                    그리기.시스템테두리 = Environment.OSVersion.Version.Build >= 22000 &&
+                        DwmSetWindowAttribute(m.Handle, 33, ref small, sizeof(int)) == 0;
+                }
+                catch { }
+            };
+        }
+
+        /// <summary>메뉴 항목을 채운 뒤 부른다 — 항목 높이를 넉넉하게.</summary>
+        public static void 메뉴항목정리(ContextMenuStrip m)
+        {
+            foreach (ToolStripItem i in m.Items)
+                if (i is ToolStripMenuItem) i.Padding = new Padding(6, 5, 12, 5);
         }
 
         /// <summary>PillButton 은 Enabled 를 보고 스스로 흐리게 그린다.</summary>
@@ -228,6 +264,58 @@ namespace PaymentAlert
                         g.DrawString(stages[i], f, br, x, 0);
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// 컨텍스트 메뉴 그리기 (Ui.메뉴꾸미기). 선택된 항목은 안쪽으로 들인 둥근 사각형으로 칠한다.
+    /// </summary>
+    class 메뉴그리기 : ToolStripRenderer
+    {
+        /// <summary>Windows 11 이 둥근 모서리와 테두리를 그려 주면 true — 그때는 사각 테두리를 그리지 않는다.</summary>
+        public bool 시스템테두리;
+
+        protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+        {
+            using (var b = new SolidBrush(Ui.캔버스)) e.Graphics.FillRectangle(b, e.AffectedBounds);
+        }
+
+        protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+        {
+            if (시스템테두리) return;
+            using (var pen = new Pen(Ui.테두리))
+                e.Graphics.DrawRectangle(pen, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
+        }
+
+        protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+        {
+            if (!e.Item.Selected || !e.Item.Enabled) return;
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            var r = new Rectangle(3, 1, e.Item.Width - 7, e.Item.Height - 3);
+            const int d = 10;
+            using (var p = new GraphicsPath())
+            using (var b = new SolidBrush(Ui.양피지))
+            {
+                p.AddArc(r.X, r.Y, d, d, 180, 90);
+                p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+                p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+                p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+                p.CloseFigure();
+                g.FillPath(b, p);
+            }
+        }
+
+        protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+        {
+            int y = e.Item.Height / 2;
+            using (var pen = new Pen(Ui.연한선)) e.Graphics.DrawLine(pen, 10, y, e.Item.Width - 10, y);
+        }
+
+        protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+        {
+            e.TextColor = e.Item.Enabled ? Ui.잉크 : Ui.아주흐림;
+            base.OnRenderItemText(e);
         }
     }
 

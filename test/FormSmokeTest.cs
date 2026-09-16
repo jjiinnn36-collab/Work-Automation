@@ -106,6 +106,12 @@ namespace PaymentAlert.Tests
             CheckTrue("연결이 없어도 오류 없음", true);
             CheckTrue("설정 버튼이 접기 버튼 왼쪽", gear.Right <= FindButton(form, "▾").Left);
 
+            Console.WriteLine("\n[GUI-5] ⋯ 메뉴는 팝업과 같은 모양 (기본 사각 테두리·아이콘 띠 없음)");
+            ContextMenuStrip 메뉴 = form.더보기메뉴;
+            CheckTrue("아이콘 여백 띠 없음", !메뉴.ShowImageMargin && !메뉴.ShowCheckMargin);
+            CheckTrue("직접 그리기", !(메뉴.Renderer is ToolStripProfessionalRenderer) && !(메뉴.Renderer is ToolStripSystemRenderer));
+            Check("흰 바탕", 메뉴.BackColor.ToArgb(), Ui.캔버스.ToArgb());
+
             Console.WriteLine("\n[GUI-2] 넘기기");
             form.이동(1);
             Check("오른쪽으로", form.현재번호, 1);
