@@ -186,6 +186,28 @@ namespace PaymentAlert.Tests
             form.접기(false);
             Check("펼쳐도 아래 끝 그대로", form.Bounds.Bottom, bottom);
 
+            Console.WriteLine("\n[GUI-8] 처음 뜰 때 작업 표시줄 쪽에서 떠오르며 나타난다");
+            int 최종Top = form.Top;
+            form.등장시작();
+            CheckTrue("시작은 투명", form.Opacity == 0 && form.등장중);
+            Check("시작은 16px 아래", form.Top, 최종Top + AlertForm.등장거리);
+            form.등장단계(0.5);
+            CheckTrue("중간은 반쯤 보임", form.Opacity > 0 && form.Opacity < 1);
+            CheckTrue("중간은 올라오는 중", form.Top > 최종Top && form.Top < 최종Top + AlertForm.등장거리);
+            form.등장시작();
+            form.등장단계(0.3);
+            form.접기(true, false);
+            CheckTrue("떠오르는 중에 접으면 먼저 제자리·불투명", !form.등장중 && form.Opacity == 1);
+            Check("그래서 접힌 창의 아래 끝이 제자리", form.Bounds.Bottom, bottom);
+            form.접기(false, false);
+            Check("끝나면 제자리", form.Top, 최종Top);
+            form.등장시작();
+            form.등장단계(1);
+            CheckTrue("끝나면 불투명·멈춤", form.Opacity == 1 && !form.등장중);
+            Check("끝난 뒤 다시 불러도 그대로", form.Top, 최종Top);
+            form.등장단계(0.2);
+            Check("끝난 뒤 단계 호출은 무시", form.Top, 최종Top);
+
             Console.WriteLine("\n[GUI-4] 설정 버튼은 웹 화면 열기를 부른다");
             Button gear = FindButton(form, form.설정버튼문구);
             CheckTrue("설정 버튼이 있음", gear != null);

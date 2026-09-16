@@ -354,6 +354,7 @@ namespace PaymentAlert
 
         public void 접기(bool 접을지, bool 움직임)
         {
+            if (등장중) 등장단계(1);   // 떠오르는 도중이면 먼저 제자리에 놓고 접는다 (아래 끝 기준이 흔들리지 않게)
             접힘 = 접을지;
             접기버튼.Text = 접을지 ? "▴" : "▾";
             // 접으면 '기한 알림 N건' 과 설정·펼치기 버튼만 남긴다 (두 버튼은 숨기지 않는다, 사용자 요청 2026-09-16). 줄 빈 곳이나 제목을 눌러도 펼쳐진다.
@@ -391,6 +392,61 @@ namespace PaymentAlert
             double e = 부드럽게(t);
             높이적용((int)Math.Round(시작높이 + (목표높이 - 시작높이) * e));
             if (t >= 1 && 접기타이머 != null) 접기타이머.Stop();
+        }
+
+        // ── 등장 애니메이션 ── 처음 뜰 때 작업 표시줄 쪽에서 16px 떠오르며 투명→불투명 (ADR-0015 3-6).
+        public const int 등장ms = 220;
+        public const int 등장거리 = 16;
+        Timer 등장타이머;
+        System.Diagnostics.Stopwatch 등장시계;
+        int 등장최종Top;
+        bool 등장중값;
+
+        /// <summary>창을 띄울 때 등장 애니메이션을 쓸지. Windows '애니메이션 효과' 가 꺼져 있으면 쓰지 않는다.</summary>
+        public bool 등장사용 = true;
+
+        public bool 등장중 { get { return 등장중값; } }
+
+        protected override void OnLoad(EventArgs e)
+        {
+            base.OnLoad(e);
+            // 창이 화면에 그려지기 전(OnLoad)에 투명·아래로 옮겨 두어야 제자리에서 한 번 번쩍이지 않는다.
+            if (등장사용 && SystemInformation.UIEffectsEnabled) 등장시작();
+        }
+
+        /// <summary>등장 애니메이션을 시작한다. 지금 자리가 최종 자리다 (시험에서도 부른다).</summary>
+        public void 등장시작()
+        {
+            // 이미 떠오르는 중이면 지금 Top 은 중간 위치다 — 처음 기억한 최종 자리를 그대로 쓴다.
+            if (!등장중값) 등장최종Top = Top;
+            등장중값 = true;
+            Opacity = 0;
+            Top = 등장최종Top + 등장거리;
+            if (등장타이머 == null)
+            {
+                등장타이머 = new Timer();
+                등장타이머.Interval = 10;
+                등장타이머.Tick += delegate { 등장단계(등장시계.ElapsedMilliseconds / (double)등장ms); };
+            }
+            등장시계 = System.Diagnostics.Stopwatch.StartNew();
+            등장타이머.Start();
+        }
+
+        /// <summary>등장 애니메이션의 t(0~1) 지점. 1 이상이면 제자리·불투명으로 끝낸다.</summary>
+        public void 등장단계(double t)
+        {
+            if (!등장중값) return;
+            double e = 부드럽게(t);
+            if (t >= 1)
+            {
+                if (등장타이머 != null) 등장타이머.Stop();
+                등장중값 = false;
+                Top = 등장최종Top;
+                Opacity = 1;
+                return;
+            }
+            Opacity = e;
+            Top = 등장최종Top + (int)Math.Round(등장거리 * (1 - e));
         }
 
         /// <summary>ease-out cubic — 처음엔 빠르고 끝에서 천천히 멈춘다.</summary>
@@ -757,6 +813,7 @@ namespace PaymentAlert
             {
                 넘김타이머.Dispose();
                 if (접기타이머 != null) 접기타이머.Dispose();
+                if (등장타이머 != null) 등장타이머.Dispose();
                 메뉴.Dispose();
             }
             base.Dispose(disposing);
