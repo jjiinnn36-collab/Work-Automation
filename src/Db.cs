@@ -726,6 +726,16 @@ namespace PaymentAlert
             return result;
         }
 
+        /// <summary>건마다 마지막으로 기록된 동작 (키 = "연도\tid"). 웹이 '대기 취소' 를 보일지 정할 때 쓴다.</summary>
+        public Dictionary<string, string> 마지막동작()
+        {
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            c.Each("SELECT e.연도, e.id, e.동작 FROM events e " +
+                   "JOIN (SELECT MAX(rid) m FROM events GROUP BY 연도, id) x ON e.rid = x.m",
+                delegate(Reader r) { map[r.Int(0) + "\t" + r.Str(1)] = r.Str(2); });
+            return map;
+        }
+
         /// <summary>
         /// '오늘은 대기' 를 취소한다. 단계는 그대로 두고 오늘 확인 표시만 지워 다시 묻게 한다 (ADR-0019).
         /// 오늘 대기한 건이 아니면 거절한다.
@@ -737,7 +747,11 @@ namespace PaymentAlert
             {
                 StatusRecord st = LoadStatus(연도, id);
                 확인(st, 기대단계);
-                if (!st.최종확인일.HasValue || st.최종확인일.Value.Date != 오늘.Date)
+                // 진행도 오늘 확인 표시를 남기므로, 마지막으로 한 일이 '대기' 인 건만 취소한다.
+                string 마지막 = null;
+                c.Each("SELECT 동작 FROM events WHERE 연도=? AND id=? ORDER BY rid DESC LIMIT 1",
+                    delegate(Reader r) { 마지막 = r.Str(0); }, 연도, id);
+                if (!st.최종확인일.HasValue || st.최종확인일.Value.Date != 오늘.Date || 마지막 != "대기")
                     throw new StageConflictException("오늘 대기한 건이 아닙니다.", st.단계);
                 st.최종확인일 = null;
                 상태쓰기(st);

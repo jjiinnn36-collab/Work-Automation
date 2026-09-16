@@ -4,7 +4,7 @@ import * as React from "react"
 
 import type { Item, Occurrence } from "@/lib/types"
 
-export type StageAction = "advance" | "defer" | "revert"
+export type StageAction = "advance" | "defer" | "revert" | "undefer"
 
 export interface AppActions {
   /** 서버 기준 오늘 (YYYY-MM-DD). 아직 모르면 빈 문자열. */

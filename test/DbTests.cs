@@ -761,6 +761,19 @@ namespace PaymentAlert.Tests
                     try { s.대기취소(2026, "x", 1, DateTime.Now, 오늘, "시험"); }
                     catch (StageConflictException) { 거절 = true; }
                     CheckTrue("화면이 본 단계와 다르면 거절", 거절);
+
+                    // 진행도 오늘 확인 표시를 남긴다 — 마지막 동작이 '대기' 가 아니면 대기 취소 대상이 아니다 (ADR-0022)
+                    s.Advance(2026, "y", Stages.For(Flow.납부만), 0, DateTime.Now, 오늘, "시험");
+                    거절 = false;
+                    try { s.대기취소(2026, "y", 1, DateTime.Now, 오늘, "시험"); }
+                    catch (StageConflictException) { 거절 = true; }
+                    CheckTrue("오늘 진행한 건은 대기 취소 거절", 거절);
+                    s.Revert(2026, "y", Stages.For(Flow.납부만), 1, DateTime.Now, "시험");
+                    s.Defer(2026, "y", 0, DateTime.Now, 오늘, "시험");
+                    CheckTrue("되돌린 뒤 대기한 건은 취소 가능", !s.대기취소(2026, "y", 0, DateTime.Now, 오늘, "시험").최종확인일.HasValue);
+                    Dictionary<string, string> 마지막 = s.마지막동작();
+                    Check("건마다 마지막 동작", 마지막["2026\ty"], "대기취소");
+                    CheckTrue("기록 없는 건은 없음", !마지막.ContainsKey("2026\tz"));
                 }
             }
             finally { 치우기(dir); }

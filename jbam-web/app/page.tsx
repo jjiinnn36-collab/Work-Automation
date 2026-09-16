@@ -111,11 +111,40 @@ export default function Page() {
         })
         if (!yes) return
       }
-      const path = kind === "advance" ? "/api/advance" : kind === "defer" ? "/api/defer" : "/api/revert"
+      const path =
+        kind === "advance" ? "/api/advance" : kind === "defer" ? "/api/defer" : kind === "undefer" ? "/api/undefer" : "/api/revert"
       try {
         await post(path, { y: o.year, id: o.id, stage: o.stage })
-        const title = kind === "advance" ? `${o.name} · ${o.nextStage} 끝남` : kind === "defer" ? `${o.name} · 오늘은 대기` : `${o.name} · 되돌렸습니다`
-        toast.add({ title, type: "success" })
+        const title =
+          kind === "advance" ? `${o.name} · ${o.nextStage} 끝남`
+          : kind === "defer" ? `${o.name} · 오늘은 대기`
+          : kind === "undefer" ? `${o.name} · 대기를 취소했습니다`
+          : `${o.name} · 되돌렸습니다`
+        // 진행·대기는 바로 저장되므로, 알림에서 곧바로 되돌릴 수 있게 한다 (ADR-0022).
+        const undo =
+          kind === "advance" ? { label: "되돌리기", path: "/api/revert", stage: o.stage + 1, done: `${o.name} · 되돌렸습니다` }
+          : kind === "defer" ? { label: "대기 취소", path: "/api/undefer", stage: o.stage, done: `${o.name} · 대기를 취소했습니다` }
+          : null
+        toast.add({
+          title,
+          type: "success",
+          timeout: undo ? 8000 : undefined,
+          actionProps: undo
+            ? {
+                children: undo.label,
+                onClick: async () => {
+                  try {
+                    await post(undo.path, { y: o.year, id: o.id, stage: undo.stage })
+                    toast.add({ title: undo.done, type: "success" })
+                  } catch (e) {
+                    toast.add({ title: "되돌리지 못했습니다", description: errorMessage(e), type: "error" })
+                  } finally {
+                    refresh()
+                  }
+                },
+              }
+            : undefined,
+        })
       } catch (e) {
         const conflict = e instanceof ApiError && e.status === 409
         toast.add({ title: conflict ? "다른 곳에서 먼저 바뀌었습니다" : "처리하지 못했습니다", description: errorMessage(e), type: "error" })

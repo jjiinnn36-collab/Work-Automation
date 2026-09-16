@@ -4,8 +4,9 @@ import * as React from "react"
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react"
 
 import { errorMessage, get, post } from "@/lib/api"
-import { groupSum, md, parseWon, won } from "@/lib/logic"
+import { discardConfirm, groupOverwrites, groupSum, md, overwriteConfirm, parseWon, won } from "@/lib/logic"
 import type { GroupData } from "@/lib/types"
+import { useCloseGuard } from "@/hooks/use-close-guard"
 import { useApp } from "@/components/app/app-context"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -49,7 +50,19 @@ export function GroupAmountDialog({
       .catch((e) => setError(errorMessage(e)))
   }, [open, target, year])
 
+  // 입력한 회차 금액·출처가 있으면 닫기 전에 묻는다 (ADR-0022).
+  const dirty = open && (Object.values(typed).some((v) => v.trim() !== "") || source.trim() !== "")
+  const guardedClose = useCloseGuard(dirty, onOpenChange, "회차 금액")
+
   if (!target) return null
+
+  /** 해를 바꾸면 입력칸을 비운다 — 적어 둔 금액이 다른 해에 저장되지 않게. 비우기 전에 묻는다. */
+  async function changeYear(d: number) {
+    if (Object.values(typed).some((v) => v.trim() !== "") && !(await app.confirm(discardConfirm("회차 금액")))) return
+    setTyped({})
+    setError(null)
+    setYear((y) => y + d)
+  }
 
   const rows = data?.rows ?? []
   const invalid = Object.entries(typed).filter(([, v]) => v.trim() !== "" && parseWon(v) === null).map(([k]) => k)
@@ -65,6 +78,12 @@ export function GroupAmountDialog({
       setError("원 단위 숫자로 넣어 주세요.")
       return
     }
+    // 이미 넣은 회차 금액이 바뀌면 바뀌는 회차를 보여 주고 묻는다 (ADR-0022).
+    const changes = groupOverwrites(
+      rows.map((r) => ({ id: r.id, label: `${Number(r.due.slice(5, 7))}월`, amount: r.amount, entered: r.amountEntered })),
+      typed
+    )
+    if (changes.length > 0 && !(await app.confirm(overwriteConfirm(changes)))) return
     setBusy(true)
     try {
       const payload: Record<string, string | number> = { y: year, group: target!.group, source }
@@ -82,16 +101,16 @@ export function GroupAmountDialog({
 
   let firstEditable = true
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={guardedClose}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{data ? `${data.name} 회차 금액` : "회차 금액"}</DialogTitle>
           <DialogDescription className="flex items-center gap-1">
-            <Button variant="ghost" size="icon-xs" aria-label="이전 해" onClick={() => setYear((y) => y - 1)}>
+            <Button variant="ghost" size="icon-xs" aria-label="이전 해" onClick={() => changeYear(-1)}>
               <ChevronLeftIcon />
             </Button>
             <span className="tabular-nums">{year}년</span>
-            <Button variant="ghost" size="icon-xs" aria-label="다음 해" onClick={() => setYear((y) => y + 1)}>
+            <Button variant="ghost" size="icon-xs" aria-label="다음 해" onClick={() => changeYear(1)}>
               <ChevronRightIcon />
             </Button>
             {data && <span>· {data.org} · 안내문 한 장의 회차를 한 번에 넣습니다</span>}
@@ -168,7 +187,7 @@ export function GroupAmountDialog({
             </Field>
             {error && <FieldError>{error}</FieldError>}
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              <Button type="button" variant="outline" onClick={() => guardedClose(false)}>
                 취소
               </Button>
               <Button type="submit" disabled={busy}>

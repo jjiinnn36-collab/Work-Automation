@@ -186,6 +186,7 @@ namespace PaymentAlert.Tests
                 설정과관리(server);
                 분할납부();
                 자동아이디와사용자흐름();
+                대기취소();
                 문서와순서와기록(server);
                 느린요청중병렬응답(server);
             }
@@ -626,6 +627,30 @@ namespace PaymentAlert.Tests
             Has("금액 없음", r.Text, "\"paid\":false");
             Has("금액 없음 표시", r.Text, "\"noAmount\":true");
             Post("/api/item/delete", "id=cust");
+        }
+
+        static void 대기취소()
+        {
+            Console.WriteLine("\n[WEB-18] 웹에서 '오늘은 대기' 취소 (ADR-0022)");
+            Check("시험 항목 만들기", Post("/api/item", "mode=new&id=udf&flow=" + E("납부만") + "&org=a&name=b&month=12&day=1").Status, 200);
+            Res r = Post("/api/defer", "y=2026&id=udf&stage=0");
+            Check("대기 200", r.Status, 200);
+            Has("대기한 건은 deferredToday", r.Text, "\"deferredToday\":true");
+            Has("알림 목록에도 표시", Get("/api/alerts").Text + Get("/api/year?y=2026").Text, "\"deferredToday\":true");
+            r = Post("/api/undefer", "y=2026&id=udf&stage=0");
+            Check("대기 취소 200", r.Status, 200);
+            Has("취소 뒤 오늘 확인 아님", r.Text, "\"confirmedToday\":false");
+            Has("취소 뒤 deferredToday 아님", r.Text, "\"deferredToday\":false");
+            CheckTrue("DB 에서도 확인 표시 지움", !상태("udf").최종확인일.HasValue);
+            Check("두 번 취소는 409", Post("/api/undefer", "y=2026&id=udf&stage=0").Status, 409);
+            Check("단계가 다르면 409", Post("/api/undefer", "y=2026&id=udf&stage=1").Status, 409);
+            Post("/api/advance", "y=2026&id=udf&stage=0");
+            r = Post("/api/undefer", "y=2026&id=udf&stage=1");
+            Check("진행한 건은 대기 취소 409", r.Status, 409);
+            Post("/api/revert", "y=2026&id=udf&stage=1");
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+                CheckTrue("대기취소 기록이 웹 출처로 남음", db.LoadEvents(2026, "udf").Exists(delegate(StatusEvent e) { return e.동작 == "대기취소" && e.출처 == "웹"; }));
+            Post("/api/item/delete", "id=udf");
         }
 
         static void 설정과관리(WebServer server)

@@ -456,6 +456,32 @@ namespace PaymentAlert.Tests
             s.Dispose();
         }
 
+        /// <summary>카드가 막 바뀐 직후의 누름은 버린다 (ADR-0022).</summary>
+        static void 연달아누르기(BusinessDayCalendar cal, List<PaymentItem> master, AttachmentStore store)
+        {
+            Console.WriteLine("\n[GUI-14] 카드가 막 바뀐 직후 행동 버튼 누름은 무시");
+            DateTime today = new DateTime(2026, 9, 16);
+            var rows = new List<AlertRow> {
+                행(master[0], 2026, new DateTime(2026, 9, 18), 0),
+                행(master[0], 2026, new DateTime(2026, 9, 21), 0)
+            };
+            var form = new AlertForm(rows, new List<AlertRow>(), cal, today, null, store);
+            form.CreateControl();
+            CheckTrue("처음에는 막힘 없음", !form.행동막힘);
+            form.이동(1);
+            CheckTrue("넘긴 직후 막힘", form.행동막힘);
+            Button 진행 = FindButton(form, form.진행버튼문구);
+            누름(진행);
+            Check("막힌 동안 누름은 무시 (단계 그대로)", rows[1].Status.단계, 0);
+            System.Threading.Thread.Sleep(AlertForm.입력막힘ms + 80);
+            CheckTrue("잠시 뒤 풀림", !form.행동막힘);
+            누름(진행);
+            Check("풀린 뒤 누름은 처리", rows[1].Status.단계, 1);
+            form.이동(1);
+            CheckTrue("같은 카드로 이동은 막지 않음", !form.행동막힘);
+            form.Dispose();
+        }
+
         [STAThread]
         static int Main()
         {
@@ -528,6 +554,7 @@ namespace PaymentAlert.Tests
             코너팝업(cal, master, store);
             버튼공통();
             밀기();
+            연달아누르기(cal, master, store);
 
             Console.WriteLine("\n" + new string('=', 50));
             Console.WriteLine(string.Format("  통과 {0}건 / 실패 {1}건", passed, failed));

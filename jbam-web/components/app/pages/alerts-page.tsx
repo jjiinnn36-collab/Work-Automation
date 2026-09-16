@@ -150,7 +150,14 @@ function AlertCard({ o }: { o: Occurrence }) {
       <CardFooter className="flex-wrap gap-2">
         <AdvanceButton o={o} />
         {o.confirmedToday ? (
-          <Badge variant="secondary">오늘 대기함</Badge>
+          <>
+            <Badge variant="secondary">오늘 대기함</Badge>
+            {o.deferredToday && (
+              <Button variant="ghost" size="sm" onClick={() => app.act("undefer", o)}>
+                대기 취소
+              </Button>
+            )}
+          </>
         ) : (
           <Button variant="outline" size="sm" onClick={() => app.act("defer", o)}>
             오늘은 대기

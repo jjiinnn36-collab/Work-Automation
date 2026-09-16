@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import {
   won, md, parseWon, stepStates, stepTooltip, yearStatus, sortRemaining, matchYearFilter,
   shiftMonth, presetRange, parseMonths, groupSum, previewKind, csvCell, toCsv, safeUrl,
-  viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary, settingsConfirm,
+  viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary, settingsConfirm, discardConfirm, amountOverwrite, groupOverwrites, overwriteConfirm,
 } from "./logic.ts"
 import type { Occurrence } from "./types.ts"
 
@@ -160,4 +160,33 @@ test("설정의 되돌리기 어려운 동작은 확인 창을 거친다 (ADR-00
   assert.equal(clr.destructive, true)
   assert.match(clr.description, /^2026-09-01 이전/)
   assert.match(settingsConfirm("start-clear", null).description, /^예전/)
+})
+
+test("입력 중 닫기·금액 덮어쓰기 확인 (ADR-0022)", () => {
+  const d = discardConfirm("내용")
+  assert.equal(d.destructive, true)
+  assert.equal(d.action, "닫기")
+  assert.match(d.description, /입력한 내용/)
+
+  assert.equal(amountOverwrite(null, false, 1000), null)
+  assert.equal(amountOverwrite(1000, false, 2000), null)
+  assert.equal(amountOverwrite(1000, true, 1000), null)
+  assert.deepEqual(amountOverwrite(1000, true, 2000), { from: 1000, to: 2000 })
+
+  const rows = [
+    { id: "a", label: "5월", amount: 100, entered: true },
+    { id: "b", label: "6월", amount: 200, entered: true },
+    { id: "c", label: "7월", amount: null, entered: false },
+    { id: "d", label: "8월", amount: 300, entered: false },
+  ]
+  const ch = groupOverwrites(rows, { a: "150", b: "200", c: "999", d: "1", x: "5" })
+  assert.deepEqual(ch, [{ label: "5월", from: 100, to: 150 }])
+  assert.deepEqual(groupOverwrites(rows, { a: "", b: "abc" }), [])
+
+  const one = overwriteConfirm(ch)
+  assert.equal(one.title, "이미 넣은 금액을 바꿀까요?")
+  assert.equal(one.description, "5월 100원 → 150원")
+  const many = overwriteConfirm(Array.from({ length: 7 }, (_, i) => ({ label: `${i + 1}월`, from: 1, to: 2 })))
+  assert.equal(many.title, "이미 넣은 금액 7건을 바꿀까요?")
+  assert.match(many.description, / 외 2건$/)
 })

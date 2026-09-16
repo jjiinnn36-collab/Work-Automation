@@ -268,3 +268,50 @@ export function settingsConfirm(kind: SettingsRisk, startDate?: string | null): 
       }
   }
 }
+
+// ── 잘못 누름·덮어쓰기 막기 (ADR-0022) ──
+
+/** 입력하던 창을 닫으려 할 때의 확인 문구. */
+export function discardConfirm(what: string) {
+  return {
+    title: "저장하지 않고 닫을까요?",
+    description: `입력한 ${what}이 저장되지 않고 사라집니다.`,
+    action: "닫기",
+    destructive: true,
+  }
+}
+
+/** 이미 넣은 금액을 다른 값으로 바꾸는지. 처음 넣거나 같은 값이면 null. */
+export function amountOverwrite(existing: number | null, entered: boolean, next: number): { from: number; to: number } | null {
+  if (!entered || existing === null || existing === next) return null
+  return { from: existing, to: next }
+}
+
+/** 회차 금액을 한꺼번에 넣을 때 이미 들어간 금액이 바뀌는 회차. 빈 칸·같은 값·처음 넣는 회차는 뺀다. */
+export function groupOverwrites(
+  rows: { id: string; label: string; amount: number | null; entered: boolean }[],
+  typed: Record<string, string>
+): { label: string; from: number; to: number }[] {
+  const out: { label: string; from: number; to: number }[] = []
+  for (const r of rows) {
+    const raw = (typed[r.id] ?? "").trim()
+    if (!raw) continue
+    const v = parseWon(raw)
+    if (v === null) continue
+    const c = amountOverwrite(r.amount, r.entered, v)
+    if (c) out.push({ label: r.label, ...c })
+  }
+  return out
+}
+
+/** 금액 덮어쓰기 확인 문구. 바뀌는 회차가 많으면 앞 5개만 적는다. */
+export function overwriteConfirm(changes: { label: string; from: number; to: number }[]) {
+  const shown = changes.slice(0, 5).map((c) => `${c.label} ${won(c.from)}원 → ${won(c.to)}원`)
+  const more = changes.length > 5 ? ` 외 ${changes.length - 5}건` : ""
+  return {
+    title: changes.length === 1 ? "이미 넣은 금액을 바꿀까요?" : `이미 넣은 금액 ${changes.length}건을 바꿀까요?`,
+    description: shown.join(" · ") + more,
+    action: "바꾸기",
+    destructive: false,
+  }
+}

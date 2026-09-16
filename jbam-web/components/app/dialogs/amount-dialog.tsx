@@ -4,8 +4,9 @@ import * as React from "react"
 import { LayersIcon } from "lucide-react"
 
 import { errorMessage, post } from "@/lib/api"
-import { parseWon, won } from "@/lib/logic"
+import { amountOverwrite, discardConfirm, overwriteConfirm, parseWon, won } from "@/lib/logic"
 import type { Occurrence } from "@/lib/types"
+import { useCloseGuard } from "@/hooks/use-close-guard"
 import { useApp } from "@/components/app/app-context"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -25,13 +26,20 @@ export function AmountDialog({ o, open, onOpenChange }: { o: Occurrence | null; 
   const [memo, setMemo] = React.useState("")
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
+  const [initial, setInitial] = React.useState("")
 
   React.useEffect(() => {
     if (!open || !o) return
-    setAmount(o.amountEntered && o.amount !== null ? won(o.amount) : "")
+    const start = o.amountEntered && o.amount !== null ? won(o.amount) : ""
+    setAmount(start)
+    setInitial(start)
     setMemo("")
     setError(null)
   }, [open, o])
+
+  // 입력을 바꿨으면 닫기 전에 묻는다 (ADR-0022).
+  const dirty = open && (amount !== initial || memo.trim() !== "")
+  const guardedClose = useCloseGuard(dirty, onOpenChange, "금액")
 
   if (!o) return null
 
@@ -52,6 +60,9 @@ export function AmountDialog({ o, open, onOpenChange }: { o: Occurrence | null; 
       inputRef.current?.focus()
       return
     }
+    // 이미 넣은 금액을 다른 값으로 바꾸면 한 번 묻는다 (ADR-0022).
+    const change = amountOverwrite(o.amount, o.amountEntered, v)
+    if (change && !(await app.confirm(overwriteConfirm([{ label: `${o.year}년 ${o.name}`, ...change }])))) return
     setBusy(true)
     try {
       await post("/api/amount", { y: o.year, id: o.id, amount: String(v), memo })
@@ -83,7 +94,7 @@ export function AmountDialog({ o, open, onOpenChange }: { o: Occurrence | null; 
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={guardedClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{o.name} 금액</DialogTitle>
@@ -127,7 +138,8 @@ export function AmountDialog({ o, open, onOpenChange }: { o: Occurrence | null; 
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => {
+                onClick={async () => {
+                  if (dirty && !(await app.confirm(discardConfirm("금액")))) return
                   onOpenChange(false)
                   app.openGroup(o.year, o.group)
                 }}
@@ -142,7 +154,7 @@ export function AmountDialog({ o, open, onOpenChange }: { o: Occurrence | null; 
                 입력한 금액 지우기
               </Button>
             )}
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => guardedClose(false)}>
               취소
             </Button>
             <Button type="submit" disabled={busy}>

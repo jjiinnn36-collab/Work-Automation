@@ -33,6 +33,8 @@ export interface Occurrence {
   amountEntered: boolean
   amountRule: string
   confirmedToday: boolean
+  /** 오늘 '오늘은 대기' 를 눌렀고 그 뒤 다른 동작이 없음 — 대기 취소를 보인다 (ADR-0022). */
+  deferredToday?: boolean
   changedAt: string | null
   attachments: number
   memo: string

@@ -3,7 +3,7 @@
 import * as React from "react"
 import {
   CheckIcon, ExternalLinkIcon, FileTextIcon, HistoryIcon, MoreHorizontalIcon, PaperclipIcon,
-  RotateCcwIcon, WalletIcon, LayersIcon, ClockIcon, ArrowRightIcon,
+  RotateCcwIcon, WalletIcon, LayersIcon, ClockIcon, ArrowRightIcon, Undo2Icon,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -200,6 +200,11 @@ export function RowMenu({ o }: { o: Occurrence }) {
           {!o.done && !o.beforeStart && !o.confirmedToday && (
             <DropdownMenuItem onClick={() => app.act("defer", o)}>
               <ClockIcon /> 오늘은 대기
+            </DropdownMenuItem>
+          )}
+          {o.deferredToday && (
+            <DropdownMenuItem onClick={() => app.act("undefer", o)}>
+              <Undo2Icon /> &lsquo;오늘은 대기&rsquo; 취소
             </DropdownMenuItem>
           )}
           {o.stage > 0 && (

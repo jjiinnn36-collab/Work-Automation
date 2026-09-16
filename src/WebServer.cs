@@ -307,6 +307,7 @@ namespace PaymentAlert
                     case "/api/advance": Send(ctx.Response, 200, ChangeStage(env, f, "진행")); return;
                     case "/api/defer": Send(ctx.Response, 200, ChangeStage(env, f, "대기")); return;
                     case "/api/revert": Send(ctx.Response, 200, ChangeStage(env, f, "되돌리기")); return;
+                    case "/api/undefer": Send(ctx.Response, 200, ChangeStage(env, f, "대기취소")); return;
                     case "/api/amount": Send(ctx.Response, 200, SaveAmount(env, f)); return;
                     case "/api/amount/delete":
                         env.Db.DeleteAmount(연도(f["y"]), 아이디(f["id"]), 출처);
@@ -368,6 +369,13 @@ namespace PaymentAlert
             }
 
             public void Dispose() { Db.Dispose(); }
+
+            Dictionary<string, string> _마지막동작;
+            /// <summary>건마다 마지막 동작. 필요할 때 한 번만 읽는다.</summary>
+            public Dictionary<string, string> 마지막동작
+            {
+                get { if (_마지막동작 == null) _마지막동작 = Db.마지막동작(); return _마지막동작; }
+            }
 
             public PaymentItem Item(string id)
             {
@@ -695,6 +703,7 @@ namespace PaymentAlert
                 StatusRecord st;
                 if (동작 == "진행") st = env.Db.Advance(y, it.Id, Stages.For(it), 기대, DateTime.Now, env.Today, 출처);
                 else if (동작 == "대기") st = env.Db.Defer(y, it.Id, 기대, DateTime.Now, env.Today, 출처);
+                else if (동작 == "대기취소") st = env.Db.대기취소(y, it.Id, 기대, DateTime.Now, env.Today, 출처);
                 else st = env.Db.Revert(y, it.Id, Stages.For(it), 기대, DateTime.Now, 출처);
                 env.Status[st.Key] = st;
             }
@@ -1106,6 +1115,10 @@ namespace PaymentAlert
 
             bool confirmedToday = 오늘대기 ||
                 (st != null && st.최종확인일.HasValue && st.최종확인일.Value.Date == env.Today);
+            // 오늘 '오늘은 대기' 를 눌렀고 그 뒤로 다른 동작이 없는 건 — 웹에서 대기 취소를 보인다 (ADR-0022).
+            string 마지막;
+            bool deferredToday = !done && st != null && st.최종확인일.HasValue && st.최종확인일.Value.Date == env.Today &&
+                (오늘대기 || (env.마지막동작.TryGetValue(o.Key, out 마지막) && 마지막 == "대기"));
 
             return new JObj()
                 .Set("year", o.연도)
@@ -1137,6 +1150,7 @@ namespace PaymentAlert
                 .Set("amountEntered", o.실제금액 != null)
                 .Set("amountRule", it.금액규칙 ?? "")
                 .Set("confirmedToday", confirmedToday)
+                .Set("deferredToday", deferredToday)
                 .Set("changedAt", st != null && st.변경일시.HasValue ? st.변경일시.Value.ToString("yyyy-MM-dd HH:mm", Inv) : null)
                 .Set("attachments", env.Files.CountFor(o.연도, it.Id))
                 .Set("beforeStart", before)

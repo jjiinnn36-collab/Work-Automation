@@ -199,13 +199,13 @@ namespace PaymentAlert
             진행.반경 = 8;
             진행.Size = new Size(84, 버튼높이);
             진행.Location = new Point(16, 버튼y);
-            진행.Click += delegate { 적용후넘김(현재행(), "진행"); };
+            진행.Click += delegate { if (!행동막힘) 적용후넘김(현재행(), "진행"); };
             본문.Controls.Add(진행);
 
             대기 = 알약("오늘은 대기", false, 12);
             대기.옅은채움 = true;
             대기.반경 = 8;
-            대기.Click += delegate { 적용후넘김(현재행(), "대기"); };
+            대기.Click += delegate { if (!행동막힘) 적용후넘김(현재행(), "대기"); };
             본문.Controls.Add(대기);
 
             // 고른 뒤 표시는 버튼과 헷갈리지 않게 바탕 없이 흐린 글씨 + ✓.
@@ -216,7 +216,7 @@ namespace PaymentAlert
             되돌리기 = 알약("되돌리기", false, 12);
             되돌리기.옅은채움 = true;
             되돌리기.반경 = 8;
-            되돌리기.Click += delegate { 되돌리기누름(); };
+            되돌리기.Click += delegate { if (!행동막힘) 되돌리기누름(); };
             본문.Controls.Add(되돌리기);
 
             메뉴 = new ContextMenuStrip();
@@ -255,7 +255,7 @@ namespace PaymentAlert
             closeButton.반경 = 8;
             closeButton.Size = new Size(64, 버튼높이);
             closeButton.Location = new Point(16, 90);
-            closeButton.Click += delegate { TryClose(); };
+            closeButton.Click += delegate { if (!행동막힘) TryClose(); };
             완료판.Controls.Add(closeButton);
 
             웹보기 = 알약("웹에서 보기", false, 12);
@@ -993,7 +993,7 @@ namespace PaymentAlert
                     끄는중 = false;
                     슬라이드.놓기(null, delegate(int r)
                     {
-                        if (r != 0) { index += r; 완료보기 = false; RefreshState(); }
+                        if (r != 0) { index += r; 완료보기 = false; RefreshState(); 입력잠시막기(); }
                     });
                     return;
                 }
@@ -1032,12 +1032,30 @@ namespace PaymentAlert
             get { return Visible && IsHandleCreated && !접힘 && SystemInformation.UIEffectsEnabled; }
         }
 
+        // ── 연달아 누르기 막기 (ADR-0022) ──
+        // 고른 뒤 0.4초 뒤 다음 카드가 같은 자리에 같은 버튼을 내놓는다. 그 직후 들어온 누름은 앞 카드를 향한 것일 수 있어 버린다.
+        public const int 입력막힘ms = 350;
+        int 막힘시작 = int.MinValue;
+
+        /// <summary>카드가 막 바뀌었거나 밀기가 도는 중이라 행동 버튼 누름을 무시하는지.</summary>
+        public bool 행동막힘
+        {
+            get
+            {
+                if (슬라이드 != null && 슬라이드.도는중) return true;
+                if (막힘시작 == int.MinValue) return false;
+                return unchecked(Environment.TickCount - 막힘시작) < 입력막힘ms;
+            }
+        }
+
+        void 입력잠시막기() { 막힘시작 = Environment.TickCount; }
         /// <summary>
         /// 화면을 바꾸는 일을 밀기 움직임으로 감싼다. 방향 +1 = 다음 쪽(왼쪽으로 밀림), -1 = 이전 쪽, 0 = 움직임 없음.
         /// </summary>
         void 전환(Action 바꾸기, int 방향)
         {
             if (슬라이드.도는중) 슬라이드.단계(1);
+            if (방향 != 0) 입력잠시막기();
             if (방향 == 0 || !움직임가능)
             {
                 바꾸기();

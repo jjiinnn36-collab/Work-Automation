@@ -7,6 +7,7 @@ import { errorMessage, post } from "@/lib/api"
 import { dayLabel, FLOW_CARDS, itemSummary, parseMonths, parseWon, won } from "@/lib/logic"
 import { cn } from "@/lib/utils"
 import type { FlowName, Item } from "@/lib/types"
+import { useCloseGuard } from "@/hooks/use-close-guard"
 import { useDraggable } from "@/hooks/use-draggable"
 import { useApp } from "@/components/app/app-context"
 import { Button } from "@/components/ui/button"
@@ -99,10 +100,13 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
   const [error, setError] = React.useState<string | null>(null)
   const [busy, setBusy] = React.useState(false)
   const [more, setMore] = React.useState(false)
+  const [snapshot, setSnapshot] = React.useState("")
 
   React.useEffect(() => {
     if (!open) return
-    setF(fromItem(item, app.today))
+    const init = fromItem(item, app.today)
+    setF(init)
+    setSnapshot(JSON.stringify(init))
     setAmounts({})
     setAmountYear(app.today.slice(0, 4))
     setSource("")
@@ -115,6 +119,13 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
     setF((prev) => ({ ...prev, [k]: v }))
     setError(null)
   }
+
+  // 연 뒤로 바꾼 것이 있으면 닫기 전에 묻는다 (ADR-0022).
+  const dirty =
+    open &&
+    snapshot !== "" &&
+    (JSON.stringify(f) !== snapshot || Object.values(amounts).some((v) => v.trim() !== "") || source.trim() !== "")
+  const guardedClose = useCloseGuard(dirty, onOpenChange, "항목 내용")
 
   const setStep = (i: number, patch: Partial<Step>) =>
     set("steps", f.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)))
@@ -199,7 +210,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={guardedClose}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-[520px]" style={drag.style}>
         <DialogHeader {...drag.handleProps} className={`${drag.handleProps.className} rounded-t-xl px-5 pt-5 pb-2`}>
           <div className="flex items-center gap-2 pr-8">
@@ -498,7 +509,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
                 항목 삭제
               </Button>
             )}
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => guardedClose(false)}>
               취소
             </Button>
             <Button type="submit" disabled={busy}>
