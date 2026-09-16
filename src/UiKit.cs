@@ -46,6 +46,15 @@ namespace PaymentAlert
         }
 
         /// <summary>웹 시안은 px 로 적혀 있다. WinForms 는 pt 를 쓰므로 96dpi 기준으로 바꾼다.</summary>
+        /// <summary>이 PC 에 그 이름의 글꼴이 설치돼 있는지.</summary>
+        public static bool 글꼴있음(string 이름)
+        {
+            using (var 설치됨 = new InstalledFontCollection())
+                foreach (FontFamily f in 설치됨.Families)
+                    if (string.Equals(f.Name, 이름, StringComparison.OrdinalIgnoreCase)) return true;
+            return false;
+        }
+
         public static Font 글꼴(float px, bool 굵게)
         {
             return new Font(글꼴찾기(), px * 0.75f,

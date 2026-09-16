@@ -107,7 +107,7 @@ namespace PaymentAlert
             건수 = 라벨("", 15, true, Ui.강조);
             Controls.Add(건수);
 
-            날짜 = 라벨(today.ToString("M월 d일 (ddd)", new CultureInfo("ko-KR")), 12, false, Ui.아주흐림);
+            날짜 = 라벨(today.ToString("M'/'d (ddd)", new CultureInfo("ko-KR")), 12, false, Ui.아주흐림);
             Controls.Add(날짜);
 
             경고 = 라벨("⚠ 자료 확인", 12, true, Color.FromArgb(0xb4, 0x53, 0x09));
@@ -125,6 +125,19 @@ namespace PaymentAlert
             접기버튼.Location = new Point(폭 - 12 - 24, 11);
             접기버튼.Click += delegate { 접기(!접힘); };
             Controls.Add(접기버튼);
+
+            // 설정 버튼: 웹 화면(항목 관리·설정)을 연다. 웹 서버가 꺼져 있으면 부르는 쪽이 띄운다.
+            // 이모지 ⚙ 는 컬러 글꼴로 까맣게 뭉개져 Windows 기호 글꼴(Segoe MDL2 Assets)의 톱니를 쓴다. 없으면 글자로.
+            bool 기호글꼴 = Ui.글꼴있음("Segoe MDL2 Assets");
+            설정버튼 = 알약(기호글꼴 ? "" : "설정", false, 11);
+            if (기호글꼴) 설정버튼.Font = new Font("Segoe MDL2 Assets", 8f, FontStyle.Regular, GraphicsUnit.Point);
+            설정버튼.Size = new Size(기호글꼴 ? 24 : 40, 22);
+            설정버튼.Location = new Point(접기버튼.Left - 4 - 설정버튼.Width, 11);
+            설정버튼.Click += delegate { if (웹열기 != null) 웹열기(); };
+            Controls.Add(설정버튼);
+            var 풍선 = new ToolTip();
+            풍선.SetToolTip(설정버튼, "웹 화면 열기 (항목 관리·설정)");
+            풍선.SetToolTip(접기버튼, "접기 / 펼치기");
             제목.Cursor = Cursors.Hand;
             제목.Click += delegate { if (접힘) 접기(false); };
             건수.Click += delegate { if (접힘) 접기(false); };
@@ -294,6 +307,13 @@ namespace PaymentAlert
 
         bool 시스템둥근모서리;
         readonly PillButton 접기버튼;
+        readonly PillButton 설정버튼;
+
+        /// <summary>설정(⚙) 버튼을 누르면 부른다. 웹 화면을 여는 일은 Program 이 맡는다.</summary>
+        public Action 웹열기;
+
+        /// <summary>설정 버튼에 적힌 글자 (시험에서 버튼을 찾을 때 쓴다).</summary>
+        public string 설정버튼문구 { get { return 설정버튼.Text; } }
 
         void 모양맞추기()
         {
@@ -364,8 +384,9 @@ namespace PaymentAlert
 
             건수.Text = rows.Count + "건";
             건수.Location = new Point(제목.Right, 13);
-            날짜.Location = new Point(접기버튼.Left - 8 - 날짜.PreferredWidth, 17);
+            날짜.Location = new Point(설정버튼.Left - 8 - 날짜.PreferredWidth, 17);
             경고.Location = new Point(날짜.Left - 8 - 경고.PreferredWidth, 17);
+            경고.BringToFront();   // 건수 라벨과 겹쳐도 ⚠ 가 가려지지 않게
 
             카드그리기();
 

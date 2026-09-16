@@ -27,6 +27,14 @@ namespace PaymentAlert.Tests
         }
 
         /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
+        static void 누름(Button b)
+        {
+            // 창을 띄우기 전에는 PerformClick 이 무시되므로 Click 처리기를 직접 부른다.
+            typeof(Button).GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                .Invoke(b, new object[] { EventArgs.Empty });
+        }
+
+        /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
         static Button FindButton(Control root, string text)
         {
             foreach (Control c in root.Controls)
@@ -85,6 +93,18 @@ namespace PaymentAlert.Tests
             form.접기(false);
             Check("펼친 높이", form.Height, AlertForm.높이);
             Check("펼쳐도 아래 끝 그대로", form.Bounds.Bottom, bottom);
+
+            Console.WriteLine("\n[GUI-4] 설정 버튼은 웹 화면 열기를 부른다");
+            Button gear = FindButton(form, form.설정버튼문구);
+            CheckTrue("설정 버튼이 있음", gear != null);
+            int 불림 = 0;
+            form.웹열기 = delegate { 불림++; };
+            누름(gear);
+            Check("누르면 웹 열기 한 번", 불림, 1);
+            form.웹열기 = null;
+            누름(gear);
+            CheckTrue("연결이 없어도 오류 없음", true);
+            CheckTrue("설정 버튼이 접기 버튼 왼쪽", gear.Right <= FindButton(form, "▾").Left);
 
             Console.WriteLine("\n[GUI-2] 넘기기");
             form.이동(1);

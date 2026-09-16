@@ -132,7 +132,10 @@ namespace PaymentAlert
                 {
                     int p;
                     if (File.Exists(portFile) && int.TryParse(File.ReadAllText(portFile).Trim(), out p))
+                    {
+                        Log("이미 떠 있는 웹 화면을 엽니다: http://localhost:" + p + "/");
                         OpenBrowser("http://localhost:" + p + "/");
+                    }
                     else
                         Log("웹 화면이 이미 실행 중이지만 주소를 알 수 없습니다.");
                     return 0;
@@ -186,6 +189,22 @@ namespace PaymentAlert
                 psi.Arguments = "--date=" + 기준일.Value.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             using (Process.Start(psi)) { }
             Log("웹에서 고친 항목이 오늘 알릴 건이라 알림 팝업을 띄웁니다: " + id);
+        }
+
+        /// <summary>
+        /// 팝업의 설정 버튼. 자기 자신을 --web 으로 실행한다 —
+        /// 웹 서버가 이미 떠 있으면 그 주소로 브라우저만 열고, 없으면 서버를 띄운 뒤 연다 (RunWeb).
+        /// </summary>
+        static void 웹화면열기()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(Application.ExecutablePath, "--web");
+                psi.WorkingDirectory = BaseDir;
+                psi.UseShellExecute = false;
+                using (Process.Start(psi)) { }
+            }
+            catch (Exception ex) { Log("웹 화면을 열지 못했습니다: " + ex.Message); }
         }
 
         static void OpenBrowser(string url)
@@ -275,6 +294,7 @@ namespace PaymentAlert
                         return s.Revert(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, "팝업");
                     }
                 };
+                form.웹열기 = 웹화면열기;
                 Application.Run(form);
 
                 Log(string.Format("{0}: {1}건 표시. (기한초과 미처리 {2}건)",
