@@ -85,7 +85,7 @@ export function AlertsPage() {
                   <TableHead>항목</TableHead>
                   <TableHead>지금 할 일</TableHead>
                   <TableHead className="text-right">금액</TableHead>
-                  <TableHead className="w-10" />
+                  <TableHead className="text-right">동작</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -98,7 +98,12 @@ export function AlertsPage() {
                     </TableCell>
                     <TableCell><NextAction o={o} /></TableCell>
                     <TableCell className="text-right"><AmountButton o={o} /></TableCell>
-                    <TableCell><RowMenu o={o} /></TableCell>
+                    <TableCell>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <SiteOrDocs o={o} size="xs" />
+                        <RowMenu o={o} />
+                      </div>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

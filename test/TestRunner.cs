@@ -81,9 +81,10 @@ namespace PaymentAlert.Tests
             Check("신고납부 지점", string.Join("/", Stages.For(Flow.신고납부)), "신고서 작성/신고/전표발행/납부");
             Check("납부만 지점", string.Join("/", Stages.For(Flow.납부만)), "고지서수령/전표발행/납부");
             Check("제출만 지점", string.Join("/", Stages.For(Flow.제출만)), "제출자료 작성/제출");
-            Check("신고납부 시작 → 신고하기", Stages.다음행동(Flow.신고납부, 0), "신고하기");
+            Check("신고납부 시작 → 신고완료", Stages.다음행동(Flow.신고납부, 0), "신고완료");
             Check("신고 끝남 → 전표 발행", Stages.다음행동(Flow.신고납부, 1), "전표 발행");
-            Check("전표발행 끝남 → 납부하기", Stages.다음행동(Flow.신고납부, 2), "납부하기");
+            Check("전표발행 끝남 → 납부완료", Stages.다음행동(Flow.신고납부, 2), "납부완료");
+            Check("납부만 전표 뒤 → 납부완료", Stages.다음행동(Flow.납부만, 1), "납부완료");
             Check("납부만 시작 → 전표 발행", Stages.다음행동(Flow.납부만, 0), "전표 발행");
             Check("제출만 시작 → 제출하기", Stages.다음행동(Flow.제출만, 0), "제출하기");
             CheckTrue("마지막까지 끝나면 행동 없음", Stages.다음행동(Flow.납부만, 2) == null);

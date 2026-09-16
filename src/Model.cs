@@ -17,8 +17,9 @@ namespace PaymentAlert
         public static readonly string[] 제출만 = { "제출자료 작성", "제출" };
 
         // 각 지점에 도달하기 위해 하는 행동. 0 번 지점은 시작 계기라 행동이 없다 (AC-W50).
-        static readonly string[] 신고납부행동 = { "", "신고하기", "전표 발행", "납부하기" };
-        static readonly string[] 납부만행동 = { "", "전표 발행", "납부하기" };
+        // 사용자 요청(2026-09-16): 신고하기 → 신고완료, 납부하기 → 납부완료
+        static readonly string[] 신고납부행동 = { "", "신고완료", "전표 발행", "납부완료" };
+        static readonly string[] 납부만행동 = { "", "전표 발행", "납부완료" };
         static readonly string[] 제출만행동 = { "", "제출하기" };
 
         public const string 끝남문구 = "모두 끝났습니다";

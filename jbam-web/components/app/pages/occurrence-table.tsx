@@ -67,9 +67,9 @@ export function OccurrenceTable({ rows, empty, showYear = false }: { rows: Occur
                   <AmountButton o={o} />
                 </TableCell>
                 <TableCell className="pr-4 align-top">
-                  <div className="flex items-center justify-end gap-1.5">
+                  <div className="flex flex-wrap items-center justify-end gap-1.5">
                     <AdvanceButton o={o} size="xs" />
-                    {!o.done && !o.beforeStart && <SiteOrDocs o={o} size="xs" />}
+                    <SiteOrDocs o={o} size="xs" />
                     <RowMenu o={o} />
                   </div>
                 </TableCell>

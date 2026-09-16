@@ -120,20 +120,38 @@ export function AmountButton({ o, className }: { o: Occurrence; className?: stri
   )
 }
 
-/** 신고 홈페이지가 있으면 그 링크, 없으면 받은 문서 열기 (AC-W93, W94). */
+/**
+ * 항목에 신고 홈페이지 주소가 있으면 바로 가는 버튼. 끝난 건·시작 전 건에도 보인다 —
+ * 항목 관리에서 주소를 넣으면 모든 탭에 곧바로 나타나야 한다 (사용자 요청 2026-09-16).
+ */
+export function SiteButton({ o, size = "sm" }: { o: { siteUrl: string; siteName: string }; size?: "sm" | "xs" }) {
+  const url = o.siteUrl ? safeUrl(o.siteUrl) : null
+  if (!url) return null
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={url}
+      className={buttonVariants({ variant: "outline", size })}
+    >
+      {o.siteName || "홈페이지"} <ExternalLinkIcon data-icon="inline-end" />
+    </a>
+  )
+}
+
+/** 신고 홈페이지 버튼과 받은 문서 열기. 홈페이지가 있어도 문서 열기는 따로 남긴다 (AC-W93, W94). */
 export function SiteOrDocs({ o, size = "sm" }: { o: Occurrence; size?: "sm" | "xs" }) {
   const app = useApp()
-  const url = o.siteUrl ? safeUrl(o.siteUrl) : null
-  if (url)
-    return (
-      <a href={url} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "outline", size })}>
-        {o.siteName || "홈페이지"} <ExternalLinkIcon data-icon="inline-end" />
-      </a>
-    )
   return (
-    <Button variant="outline" size={size} onClick={() => app.openDocs(o, "받은문서")}>
-      <FileTextIcon data-icon="inline-start" /> 문서 열기
-    </Button>
+    <>
+      <SiteButton o={o} size={size} />
+      {!o.done && !o.beforeStart && (
+        <Button variant="outline" size={size} onClick={() => app.openDocs(o, "받은문서")}>
+          <FileTextIcon data-icon="inline-start" /> 문서 열기
+        </Button>
+      )}
+    </>
   )
 }
 

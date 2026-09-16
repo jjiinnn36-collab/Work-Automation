@@ -141,9 +141,11 @@ namespace PaymentAlert.Tests
             Check("접힌 높이", form.Height, AlertForm.접힌높이);
             Check("아래 끝 그대로", form.Bounds.Bottom, bottom);
             Check("폭 그대로", form.Width, AlertForm.폭);
-            CheckTrue("펼치기 버튼으로 바뀜", FindButton(form, "▴") != null);
+            CheckTrue("접으면 제목·건수만 (날짜·경고·설정·접기 버튼 숨김)", !form.머리부가보임);
+            CheckTrue("접힌 줄은 눌러서 펼칠 수 있게 손 모양", form.Cursor == Cursors.Hand);
             form.접기(false);
             Check("펼친 높이", form.Height, AlertForm.높이);
+            CheckTrue("펼치면 날짜·설정·접기 버튼 다시 보임", form.머리부가보임);
             Check("펼쳐도 아래 끝 그대로", form.Bounds.Bottom, bottom);
 
             Console.WriteLine("\n[GUI-4] 설정 버튼은 웹 화면 열기를 부른다");

@@ -8,7 +8,7 @@ import { eventSummary, historyCsv, presetRange, toCsv, won } from "@/lib/logic"
 import type { EventRow, HistoryData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useApp } from "@/components/app/app-context"
-import { AmountButton, LoadError, PageHeader, RowMenu, StatCard } from "@/components/app/parts"
+import { AmountButton, LoadError, PageHeader, RowMenu, SiteButton, StatCard } from "@/components/app/parts"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -106,7 +106,7 @@ export function HistoryPage() {
                     <TableHead>흐름</TableHead>
                     <TableHead className="text-right">금액</TableHead>
                     <TableHead>증빙</TableHead>
-                    <TableHead className="w-10 pr-4" />
+                    <TableHead className="pr-4 text-right">동작</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -123,7 +123,12 @@ export function HistoryPage() {
                           {o.attachments > 0 ? `열기 ${o.attachments}건` : "첨부"}
                         </Button>
                       </TableCell>
-                      <TableCell className="pr-4"><RowMenu o={o} /></TableCell>
+                      <TableCell className="pr-4">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <SiteButton o={o} size="xs" />
+                          <RowMenu o={o} />
+                        </div>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

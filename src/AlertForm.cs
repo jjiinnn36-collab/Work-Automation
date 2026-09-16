@@ -141,6 +141,11 @@ namespace PaymentAlert
             제목.Cursor = Cursors.Hand;
             제목.Click += delegate { if (접힘) 접기(false); };
             건수.Click += delegate { if (접힘) 접기(false); };
+            Click += delegate { if (접힘) 접기(false); };
+            건수.Cursor = Cursors.Hand;
+            var 접힌풍선 = new ToolTip();
+            접힌풍선.SetToolTip(제목, "눌러서 펼치기");
+            접힌풍선.SetToolTip(건수, "눌러서 펼치기");
 
             // ── 카드 ──
             카드 = new CardPanel();
@@ -322,6 +327,12 @@ namespace PaymentAlert
             Region = Region.FromHrgn(CreateRoundRectRgn(0, 0, Width + 1, Height + 1, 24, 24));
         }
 
+        // 창을 띄우기 전에는 자식 Visible 이 늘 false 라 따로 든다 (시험용).
+        bool 부가보임값 = true;
+
+        /// <summary>머리의 날짜·경고·설정·접기 버튼이 보이는지. 접으면 false — 제목과 건수만 남는다.</summary>
+        public bool 머리부가보임 { get { return 부가보임값; } }
+
         /// <summary>제목 줄만 남기고 접었는지.</summary>
         public bool 접힘 { get; private set; }
 
@@ -336,6 +347,13 @@ namespace PaymentAlert
             int h = 접기 ? 접힌높이 : 높이;
             Bounds = new Rectangle(Left, bottom - h, 폭, h);
             접기버튼.Text = 접기 ? "▴" : "▾";
+            // 접으면 '기한 알림 N건' 만 남긴다 (사용자 요청 2026-09-16). 줄 어디를 눌러도 펼쳐진다.
+            부가보임값 = !접기;
+            날짜.Visible = !접기;
+            경고.Visible = !접기 && !string.IsNullOrEmpty(warningText);
+            설정버튼.Visible = !접기;
+            접기버튼.Visible = !접기;
+            Cursor = 접기 ? Cursors.Hand : Cursors.Default;
             모양맞추기();
             Invalidate();
         }
