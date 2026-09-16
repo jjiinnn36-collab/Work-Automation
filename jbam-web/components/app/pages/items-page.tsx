@@ -41,7 +41,7 @@ export function ItemsPage() {
   async function remove(it: Item) {
     const yes = await app.confirm({
       title: `'${it.name}' 항목을 지울까요?`,
-      description: "진행 기록·금액·증빙은 남습니다. 같은 id 로 다시 만들면 그대로 이어집니다.",
+      description: "목록과 알림에서 빠집니다. 진행 기록·금액·증빙은 기록으로 남습니다.",
       action: "지우기",
       destructive: true,
     })

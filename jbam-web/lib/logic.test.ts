@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import {
   won, md, parseWon, stepStates, stepTooltip, yearStatus, sortRemaining, matchYearFilter,
   shiftMonth, presetRange, parseMonths, groupSum, previewKind, csvCell, toCsv, safeUrl,
-  viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary,
+  viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary, settingsConfirm,
 } from "./logic.ts"
 import type { Occurrence } from "./types.ts"
 
@@ -147,4 +147,17 @@ test("항목 창: 선택 카드 이름과 한 줄 요약 (ADR-0020)", () => {
   assert.equal(itemSummary({ ...base, rule: "고정", fixed: "" }), "회비 · 매년 5월 20일 · 납부만 · 고정 (금액 필요) · 3영업일 전 알림")
   assert.equal(itemSummary({ ...base, flow: "제출만", paid: false, day: "말일" }), "회비 · 매년 5월 말일 · 제출만 · 3영업일 전 알림")
   assert.equal(itemSummary({ ...base, name: " ", month: "5,6,7" }), "이름 없음 · 매년 5,6,7월 20일 · 납부만 · 변동 · 3영업일 전 알림")
+})
+test("설정의 되돌리기 어려운 동작은 확인 창을 거친다 (ADR-0021)", () => {
+  const del = settingsConfirm("apikey-delete")
+  assert.equal(del.destructive, true)
+  assert.equal(del.action, "지우기")
+  assert.match(del.description, /공휴일 자료는 그대로/)
+  const rep = settingsConfirm("apikey-replace")
+  assert.equal(rep.destructive, false)
+  assert.equal(rep.action, "바꾸기")
+  const clr = settingsConfirm("start-clear", "2026-09-01")
+  assert.equal(clr.destructive, true)
+  assert.match(clr.description, /^2026-09-01 이전/)
+  assert.match(settingsConfirm("start-clear", null).description, /^예전/)
 })

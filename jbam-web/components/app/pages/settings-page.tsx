@@ -4,6 +4,7 @@ import * as React from "react"
 import { CheckCircle2Icon, DatabaseBackupIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react"
 
 import { errorMessage, get, post } from "@/lib/api"
+import { settingsConfirm, type SettingsRisk } from "@/lib/logic"
 import type { SettingsData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useApp } from "@/components/app/app-context"
@@ -62,6 +63,12 @@ export function SettingsPage() {
     }
   }
 
+  /** 되돌리기 어려운 동작은 확인 창을 거친 뒤에만 실행한다 (ADR-0021). */
+  async function risky(kind: SettingsRisk, key: string, fn: () => Promise<unknown>, ok: string) {
+    const yes = await app.confirm(settingsConfirm(kind, data?.startDate))
+    if (yes) await run(key, fn, ok)
+  }
+
   const integrityOk = data.integrity === "ok"
 
   return (
@@ -94,7 +101,7 @@ export function SettingsPage() {
               {busy === "start" && <Spinner />} 저장
             </Button>
             {data.startDate && (
-              <Button variant="outline" disabled={busy !== null} onClick={() => run("start", () => post("/api/settings/start-date", { date: "" }), "추적 시작일을 비웠습니다")}>
+              <Button variant="outline" disabled={busy !== null} onClick={() => risky("start-clear", "start", () => post("/api/settings/start-date", { date: "" }), "추적 시작일 제한을 없앴습니다")}>
                 제한 없애기
               </Button>
             )}
@@ -119,7 +126,15 @@ export function SettingsPage() {
               <FieldLabel htmlFor="set-key">공공데이터포털 인증키</FieldLabel>
               <div className="flex gap-2">
                 <Input id="set-key" type="password" autoComplete="off" placeholder={data.apiKeySet ? "저장되어 있음 — 바꾸려면 새 키 입력" : "인증키 붙여 넣기"} value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
-                <Button variant="outline" disabled={!apiKey.trim() || busy !== null} onClick={() => run("key", async () => { await post("/api/settings/apikey", { key: apiKey.trim() }); setApiKey("") }, "인증키를 저장했습니다")}>
+                <Button variant="outline" disabled={!apiKey.trim() || busy !== null} onClick={() => {
+                  const save = async () => {
+                    await post("/api/settings/apikey", { key: apiKey.trim() })
+                    setApiKey("")
+                  }
+                  // 이미 키가 있으면 덮어쓰기 전에 한 번 묻는다.
+                  if (data.apiKeySet) risky("apikey-replace", "key", save, "인증키를 바꿨습니다")
+                  else run("key", save, "인증키를 저장했습니다")
+                }}>
                   저장
                 </Button>
               </div>
@@ -136,7 +151,7 @@ export function SettingsPage() {
               {data.holidayJob.running ? <Spinner /> : <RefreshCwIcon data-icon="inline-start" />} 지금 공휴일 받기
             </Button>
             {data.apiKeySet && (
-              <Button variant="ghost" disabled={busy !== null} onClick={() => run("key", () => post("/api/settings/apikey", { key: "" }), "인증키를 지웠습니다")}>
+              <Button variant="ghost" disabled={busy !== null} onClick={() => risky("apikey-delete", "key", () => post("/api/settings/apikey", { key: "" }), "인증키를 지웠습니다")}>
                 인증키 지우기
               </Button>
             )}

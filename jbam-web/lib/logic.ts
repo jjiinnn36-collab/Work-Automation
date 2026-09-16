@@ -236,3 +236,35 @@ export function itemSummary(s: {
   parts.push(`${s.lead.trim() || "?"}영업일 전 알림`)
   return parts.join(" · ")
 }
+// ── 설정 화면의 되돌리기 어려운 동작 확인 (ADR-0021) ──
+
+export type SettingsRisk = "apikey-delete" | "apikey-replace" | "start-clear"
+
+/** 확인 창 문구. 잘못 눌러도 한 번 더 멈추게 한다. */
+export function settingsConfirm(kind: SettingsRisk, startDate?: string | null): {
+  title: string; description: string; action: string; destructive: boolean
+} {
+  switch (kind) {
+    case "apikey-delete":
+      return {
+        title: "공휴일 인증키를 지울까요?",
+        description: "지우면 새 해의 공휴일을 받아 올 수 없습니다. 이미 받은 공휴일 자료는 그대로 남고, 다시 쓰려면 키를 새로 붙여 넣어야 합니다.",
+        action: "지우기",
+        destructive: true,
+      }
+    case "apikey-replace":
+      return {
+        title: "인증키를 새 키로 바꿀까요?",
+        description: "저장된 키를 방금 넣은 키로 바꿉니다. '한국천문연구원_특일 정보' 활용신청을 한 키인지 확인하세요.",
+        action: "바꾸기",
+        destructive: false,
+      }
+    case "start-clear":
+      return {
+        title: "추적 시작일 제한을 없앨까요?",
+        description: `${startDate ? startDate + " 이전" : "예전"} 기한의 건도 다루게 됩니다. 처리 기록이 없는 예전 건이 '기한 지남' 으로 잡혀 받은 알림과 팝업에 한꺼번에 나올 수 있습니다.`,
+        action: "제한 없애기",
+        destructive: true,
+      }
+  }
+}
