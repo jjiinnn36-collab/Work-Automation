@@ -180,6 +180,83 @@ namespace PaymentAlert
     }
 
     /// <summary>
+    /// 가는 막대로 그린 진행 표시 (팝업 시안 v5, ADR-0016). 단계마다 한 칸, 끝낸 칸은 짙게.
+    /// 단계 이름은 싣지 않는다 — 다음 할 일은 버튼이 말하고, 이름은 풍선(설명)으로 본다.
+    /// </summary>
+    class StepBar : Control
+    {
+        string[] stages = new string[0];
+        int 채움;
+        bool 끝났음;
+
+        static readonly Color 채운칸 = Color.FromArgb(0x3a, 0x3a, 0x3a);
+        static readonly Color 빈칸 = Color.FromArgb(0xe8, 0xe8, 0xe8);
+        static readonly Font 글꼴 = Ui.글꼴(11);
+
+        public StepBar()
+        {
+            Height = 14;
+            // 투명 바탕은 SupportsTransparentBackColor 를 켠 뒤에야 넣을 수 있다.
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                     | ControlStyles.ResizeRedraw | ControlStyles.UserPaint
+                     | ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
+        }
+
+        /// <summary>채운수 = 끝낸 지점 수(시작 지점 포함). 끝난 건은 모두 채운다.</summary>
+        public void 설정(string[] 단계들, int 채운수, bool 완료)
+        {
+            stages = 단계들 ?? new string[0];
+            끝났음 = 완료;
+            채움 = 완료 ? stages.Length : Math.Max(0, Math.Min(stages.Length, 채운수));
+            Invalidate();
+        }
+
+        public int 채운칸수 { get { return 채움; } }
+        public string 문구 { get { return stages.Length == 0 ? "" : 채움 + "/" + stages.Length; } }
+
+        /// <summary>풍선에 보일 단계 설명: 끝낸 곳까지 ✓, 다음 할 곳에 ▶.</summary>
+        public string 설명
+        {
+            get
+            {
+                var parts = new string[stages.Length];
+                for (int i = 0; i < stages.Length; i++)
+                    parts[i] = (i < 채움 ? "✓ " : (i == 채움 && !끝났음 ? "▶ " : "")) + stages[i];
+                return string.Join("  →  ", parts);
+            }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            int n = stages.Length;
+            if (n == 0) return;
+            Graphics g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            string t = 문구;
+            int 글폭 = TextRenderer.MeasureText(t, 글꼴).Width;
+            int 막대폭 = Width - 글폭 - 6;
+            const int 두께 = 4, 틈 = 3;
+            int y = (Height - 두께) / 2;
+            float 칸 = (막대폭 - 틈 * (n - 1)) / (float)n;
+            for (int i = 0; i < n; i++)
+            {
+                var r = new RectangleF(i * (칸 + 틈), y, 칸, 두께);
+                using (var p = new GraphicsPath())
+                {
+                    float d = 두께;
+                    p.AddArc(r.X, r.Y, d, d, 90, 180);
+                    p.AddArc(r.Right - d, r.Y, d, d, 270, 180);
+                    p.CloseFigure();
+                    using (var br = new SolidBrush(i < 채움 ? 채운칸 : 빈칸)) g.FillPath(br, p);
+                }
+            }
+            TextRenderer.DrawText(g, t, 글꼴, new Rectangle(Width - 글폭, 0, 글폭, Height), Ui.아주흐림,
+                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+    }
+
+    /// <summary>
     /// 진행 단계 표시. 웹 시안의 .flow / .st / .lk 를 그대로 옮긴 것이다.
     /// 지나온 단계는 회색 채움, 지금 해야 할 단계는 파란 채움, 남은 단계는 빈 원.
     /// 각 점 위에 단계 이름을 적고, 해야 할 단계만 파랑·굵게로 강조한다.
@@ -329,6 +406,8 @@ namespace PaymentAlert
     class PillButton : Button
     {
         public bool 주요;
+        /// <summary>테두리·바탕 없이 글자만 (두 번째 선택지·아이콘). 올리거나 누르면 옅은 바탕이 생긴다.</summary>
+        public bool 글자형;
         bool 눌림;
         bool 올림;
 
@@ -408,11 +487,19 @@ namespace PaymentAlert
             else if (주요)     { 채움 = s == "눌림" ? Ui.강조눌림 : s == "올림" ? Ui.강조올림 : Ui.강조; 테두리 = 채움; 글씨 = Ui.캔버스; }
             else               { 채움 = s == "눌림" ? Ui.테두리 : s == "올림" ? Ui.양피지 : Ui.캔버스; 테두리 = Ui.테두리; 글씨 = ForeColor; }
 
+            if (글자형 && !주요)
+            {
+                // 보통·꺼짐은 바탕 없이 글자만. 올림·누름만 옅은 바탕.
+                if (s == "꺼짐") 채움 = Color.Empty;
+                else if (s == "보통") 채움 = Color.Empty;
+                테두리 = Color.Empty;
+            }
+
             var r = new Rectangle(0, 0, Width - 1, Height - 1);
             using (var p = 알약모양(r))
             {
-                using (var br = new SolidBrush(채움)) g.FillPath(br, p);
-                using (var pen = new Pen(테두리, 1f)) g.DrawPath(pen, p);
+                if (채움 != Color.Empty) using (var br = new SolidBrush(채움)) g.FillPath(br, p);
+                if (테두리 != Color.Empty) using (var pen = new Pen(테두리, 1f)) g.DrawPath(pen, p);
             }
             if (초점테보임)
             {

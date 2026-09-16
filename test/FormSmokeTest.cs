@@ -114,14 +114,14 @@ namespace PaymentAlert.Tests
             return new AlertRow { Occ = o, Status = new StatusRecord { 연도 = year, Id = it.Id, 단계 = stage } };
         }
 
-        /// <summary>코너형 팝업 (ADR-0009, 시안 v4): 자리·크기·넘기기·자동 넘김·점 상태·닫기.</summary>
+        /// <summary>코너형 팝업 (ADR-0009, 시안 v5 A안 ADR-0016): 자리·크기·넘기기·자동 넘김·점 상태·닫기.</summary>
         static void 코너팝업(BusinessDayCalendar cal, List<PaymentItem> master, AttachmentStore store)
         {
             Console.WriteLine("\n[GUI-2] 코너형 팝업 — 자리와 크기");
             var wa = new System.Drawing.Rectangle(0, 0, 1920, 1032);
             var r = AlertForm.자리(wa);
             Check("폭 340", r.Width, 340);
-            Check("높이 260", r.Height, 260);
+            Check("높이 212 (시안 v5)", r.Height, 212);
             Check("작업 표시줄 바로 위 (틈 없음)", r.Bottom, 1032);
             Check("오른쪽 12px", wa.Right - r.Right, 12);
 
@@ -135,7 +135,7 @@ namespace PaymentAlert.Tests
             var form = new AlertForm(rows, new List<AlertRow>(), cal, today, null, store);
             form.CreateControl();
             Check("제목줄 없음", form.FormBorderStyle, FormBorderStyle.None);
-            Check("창 크기", form.Size.Width + "x" + form.Size.Height, "340x260");
+            Check("창 크기", form.Size.Width + "x" + form.Size.Height, "340x212");
             Check("X 버튼 없음", form.ControlBox, false);
             CheckTrue("항상 위", form.TopMost);
             Check("첫 장은 기한이 가장 이른 건", form.현재번호, 0);
@@ -152,13 +152,13 @@ namespace PaymentAlert.Tests
             Check("폭 그대로", form.Width, AlertForm.폭);
             var 숨긴라벨 = new Label(); 숨긴라벨.Visible = false;
             CheckTrue("보이기 요청 읽기 도구 확인 (숨김=false, 기본=true)", !보이기요청(숨긴라벨) && 보이기요청(new Label()));
-            CheckTrue("접으면 날짜·경고 숨김", !form.머리부가보임);
+            CheckTrue("접으면 '!' 알림 버튼 숨김", !form.머리부가보임);
             CheckTrue("접혀도 설정 버튼은 보임", 보이기요청(FindButton(form, form.설정버튼문구)));
             CheckTrue("접혀도 펼치기(▴) 버튼은 보임", FindButton(form, "▴") != null && 보이기요청(FindButton(form, "▴")));
             CheckTrue("접힌 줄은 눌러서 펼칠 수 있게 손 모양", form.Cursor == Cursors.Hand);
             form.접기(false);
             Check("펼친 높이", form.Height, AlertForm.높이);
-            CheckTrue("펼치면 날짜·경고 다시 보임", form.머리부가보임);
+            CheckTrue("펼치면 '!' 알림 버튼 자리 복귀", form.머리부가보임);
 
             Console.WriteLine("\n[GUI-7] 접기·펼치기 애니메이션 (ease-out, 아래 끝 고정)");
             Check("곡선 시작 0", AlertForm.부드럽게(0), 0d);
@@ -210,6 +210,7 @@ namespace PaymentAlert.Tests
 
             Console.WriteLine("\n[GUI-4] 설정 버튼은 웹 화면 열기를 부른다");
             Button gear = FindButton(form, form.설정버튼문구);
+            CheckTrue("설정 버튼 글자가 비어 있지 않음 (톱니 기호 또는 '설정')", form.설정버튼문구 == "\uE713" || form.설정버튼문구 == "설정");
             CheckTrue("설정 버튼이 있음", gear != null);
             int 불림 = 0;
             form.웹열기 = delegate { 불림++; };
@@ -226,6 +227,22 @@ namespace PaymentAlert.Tests
             CheckTrue("직접 그리기", !(메뉴.Renderer is ToolStripProfessionalRenderer) && !(메뉴.Renderer is ToolStripSystemRenderer));
             Check("흰 바탕", 메뉴.BackColor.ToArgb(), Ui.캔버스.ToArgb());
 
+            Console.WriteLine("\n[GUI-9] 시안 v5 A안: 한 장에 한 건, 빨강은 상태 글 한 곳");
+            form.이동(0);
+            CheckTrue("상태 글은 'N영업일 지남'", form.상태문구.EndsWith("영업일 지남"));
+            Check("지난 건 상태 글만 빨강", form.상태색.ToArgb(), Ui.위험.ToArgb());
+            CheckTrue("기한일은 상태 옆 한 줄 (· 9/11)", form.부가문구.StartsWith("· 9/11"));
+            Check("진행 막대는 끝낸 지점/전체", form.막대문구, "1/" + Stages.For(a).Length);
+            Check("머리에는 위치", form.위치문구, "1/3");
+            CheckTrue("자료 경고·밀린 건이 없으면 '!' 없음", !form.알림있음);
+            CheckTrue("다 고르기 전에는 완료 장 아님", !form.완료보임);
+            form.이동(1);
+            Check("넘기면 위치도 바뀜", form.위치문구, "2/3");
+            CheckTrue("아직 기한 전이면 검정 D-n", form.상태문구.StartsWith("D-") && form.상태색.ToArgb() == Ui.잉크.ToArgb());
+            form.접기(true, false);
+            Check("접으면 머리에 전체 건수", form.위치문구, "3건");
+            form.접기(false, false);
+
             Console.WriteLine("\n[GUI-2] 넘기기");
             form.이동(1);
             Check("오른쪽으로", form.현재번호, 1);
@@ -241,7 +258,7 @@ namespace PaymentAlert.Tests
             PageDots dots = null;
             foreach (Control ctl in form.Controls) if (ctl is PageDots) dots = (PageDots)ctl;
             CheckTrue("점이 있음", dots != null);
-            Check("지금 보는 건이 기한 지남 → 길쭉한 빨강", dots.상태(0), "현재-지남");
+            Check("지금 보는 건이 기한 지남 → 길쭉한 점 (색은 흑백, 빨강은 상태 글에)", dots.상태(0), "현재-지남");
             Check("아직 안 고른 건 → 빈 점", dots.상태(1), "남음");
 
             Console.WriteLine("\n[GUI-2] 고르면 다음 남은 건으로, 다 고르면 닫기");
@@ -259,6 +276,21 @@ namespace PaymentAlert.Tests
             form.RefreshState();
             Check("남은 건 없음 → -1", form.다음남은건(0), -1);
             Check("다 고르면 닫기 켜짐", close.Enabled, true);
+
+            Console.WriteLine("\n[GUI-9] 다 고르면 잠깐 뒤 완료 장");
+            CheckTrue("고른 직후에는 아직 카드", !form.완료보임);
+            form.넘김실행();
+            CheckTrue("넘김 시각이 되면 완료 장", form.완료보임);
+            Check("완료 장 설명", form.완료설명문구, "진행 1건 · 오늘은 대기 2건");
+            Check("완료 장 머리는 전체 건수", form.위치문구, "3건");
+            CheckTrue("완료 장에서도 점은 보임 (눌러서 다시 보기)", form.점보임);
+            Check("완료 장에서는 '지금' 점이 없음", dots.상태(1), "처리됨");
+            form.이동(1);
+            CheckTrue("점을 누르면 카드로 돌아감", !form.완료보임);
+            rows[1].Status.단계 = 0; rows[1].오늘단계변경 = false; rows[1].Status.최종확인일 = null;
+            form.RefreshState();
+            form.넘김실행();
+            CheckTrue("남은 건이 생기면 완료 장 대신 그 건으로", !form.완료보임 && form.현재번호 == 1);
             form.Dispose();
 
             Console.WriteLine("\n[GUI-2] 한 건이면 점을 숨기고, 13건 이상이면 글자로");
