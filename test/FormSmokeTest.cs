@@ -86,6 +86,15 @@ namespace PaymentAlert.Tests
             판.Dispose();
         }
 
+        /// <summary>창을 띄우기 전이라 Visible 은 늘 false — 컨트롤이 보이기를 요청받았는지(내부 상태)를 읽는다.</summary>
+        static bool 보이기요청(Control c)
+        {
+            if (c == null) return false;
+            var m = typeof(Control).GetMethod("GetState", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new Type[] { typeof(int) }, null);
+            return (bool)m.Invoke(c, new object[] { 0x00000002 });   // STATE_VISIBLE
+        }
+
         /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
         static Button FindButton(Control root, string text)
         {
@@ -141,11 +150,40 @@ namespace PaymentAlert.Tests
             Check("접힌 높이", form.Height, AlertForm.접힌높이);
             Check("아래 끝 그대로", form.Bounds.Bottom, bottom);
             Check("폭 그대로", form.Width, AlertForm.폭);
-            CheckTrue("접으면 제목·건수만 (날짜·경고·설정·접기 버튼 숨김)", !form.머리부가보임);
+            var 숨긴라벨 = new Label(); 숨긴라벨.Visible = false;
+            CheckTrue("보이기 요청 읽기 도구 확인 (숨김=false, 기본=true)", !보이기요청(숨긴라벨) && 보이기요청(new Label()));
+            CheckTrue("접으면 날짜·경고 숨김", !form.머리부가보임);
+            CheckTrue("접혀도 설정 버튼은 보임", 보이기요청(FindButton(form, form.설정버튼문구)));
+            CheckTrue("접혀도 펼치기(▴) 버튼은 보임", FindButton(form, "▴") != null && 보이기요청(FindButton(form, "▴")));
             CheckTrue("접힌 줄은 눌러서 펼칠 수 있게 손 모양", form.Cursor == Cursors.Hand);
             form.접기(false);
             Check("펼친 높이", form.Height, AlertForm.높이);
-            CheckTrue("펼치면 날짜·설정·접기 버튼 다시 보임", form.머리부가보임);
+            CheckTrue("펼치면 날짜·경고 다시 보임", form.머리부가보임);
+
+            Console.WriteLine("\n[GUI-7] 접기·펼치기 애니메이션 (ease-out, 아래 끝 고정)");
+            Check("곡선 시작 0", AlertForm.부드럽게(0), 0d);
+            Check("곡선 끝 1", AlertForm.부드럽게(1), 1d);
+            CheckTrue("곡선은 처음이 빠르다 (t=0.5 → 0.875)", Math.Abs(AlertForm.부드럽게(0.5) - 0.875) < 1e-9);
+            CheckTrue("범위 밖은 잘림", AlertForm.부드럽게(-1) == 0 && AlertForm.부드럽게(2) == 1);
+            bool 늘어남 = true; double 앞 = 0;
+            for (int k = 1; k <= 20; k++) { double v = AlertForm.부드럽게(k / 20.0); if (v < 앞) 늘어남 = false; 앞 = v; }
+            CheckTrue("곡선은 줄지 않는다", 늘어남);
+            form.접기(true, true);
+            CheckTrue("애니메이션이면 바로 줄지 않음", form.Height == AlertForm.높이 && form.애니중);
+            CheckTrue("상태는 바로 접힘 (버튼 문구·머리)", form.접힘 && !form.머리부가보임);
+            form.애니단계(0.5);
+            CheckTrue("중간 높이", form.Height > AlertForm.접힌높이 && form.Height < AlertForm.높이);
+            Check("중간에도 아래 끝 고정", form.Bounds.Bottom, bottom);
+            form.접기(false, true);
+            form.애니단계(0.5);
+            CheckTrue("도는 중에 되돌리면 지금 높이에서 다시 커짐", form.Height > AlertForm.접힌높이 && form.Height < AlertForm.높이);
+            form.애니단계(1);
+            Check("끝나면 정확히 펼친 높이", form.Height, AlertForm.높이);
+            CheckTrue("끝나면 멈춤", !form.애니중);
+            Check("끝나도 아래 끝 고정", form.Bounds.Bottom, bottom);
+            form.접기(true);
+            Check("창을 띄우기 전에는 곧바로 접힘", form.Height, AlertForm.접힌높이);
+            form.접기(false);
             Check("펼쳐도 아래 끝 그대로", form.Bounds.Bottom, bottom);
 
             Console.WriteLine("\n[GUI-4] 설정 버튼은 웹 화면 열기를 부른다");

@@ -138,14 +138,10 @@ namespace PaymentAlert
             var 풍선 = new ToolTip();
             풍선.SetToolTip(설정버튼, "웹 화면 열기 (항목 관리·설정)");
             풍선.SetToolTip(접기버튼, "접기 / 펼치기");
-            제목.Cursor = Cursors.Hand;
             제목.Click += delegate { if (접힘) 접기(false); };
             건수.Click += delegate { if (접힘) 접기(false); };
             Click += delegate { if (접힘) 접기(false); };
-            건수.Cursor = Cursors.Hand;
-            var 접힌풍선 = new ToolTip();
-            접힌풍선.SetToolTip(제목, "눌러서 펼치기");
-            접힌풍선.SetToolTip(건수, "눌러서 펼치기");
+            접힌풍선 = new ToolTip();
 
             // ── 카드 ──
             카드 = new CardPanel();
@@ -314,6 +310,7 @@ namespace PaymentAlert
         bool 시스템둥근모서리;
         readonly PillButton 접기버튼;
         readonly PillButton 설정버튼;
+        readonly ToolTip 접힌풍선;
 
         /// <summary>설정(⚙) 버튼을 누르면 부른다. 웹 화면을 여는 일은 Program 이 맡는다.</summary>
         public Action 웹열기;
@@ -330,33 +327,96 @@ namespace PaymentAlert
         // 창을 띄우기 전에는 자식 Visible 이 늘 false 라 따로 든다 (시험용).
         bool 부가보임값 = true;
 
-        /// <summary>머리의 날짜·경고·설정·접기 버튼이 보이는지. 접으면 false — 제목과 건수만 남는다.</summary>
+        /// <summary>머리의 날짜·경고가 보이는지. 접으면 false — 제목·건수와 설정·펼치기 버튼만 남는다.</summary>
         public bool 머리부가보임 { get { return 부가보임값; } }
 
         /// <summary>제목 줄만 남기고 접었는지.</summary>
         public bool 접힘 { get; private set; }
 
+        // ── 접기 애니메이션 ── 높이를 ease-out 곡선으로 바꾼다. 아래 끝은 작업 표시줄에 붙은 채.
+        public const int 접기ms = 200;
+        Timer 접기타이머;
+        System.Diagnostics.Stopwatch 접기시계;
+        int 시작높이, 목표높이;
+
+        /// <summary>애니메이션이 도는 중인지.</summary>
+        public bool 애니중 { get { return 접기타이머 != null && 접기타이머.Enabled; } }
+
         /// <summary>
         /// 접거나 펼친다. 아래 끝은 작업 표시줄에 붙은 채로 두고 높이만 바꾼다 — 자리 고정 규칙 그대로.
         /// 접어도 닫힌 것이 아니다. 고르지 않은 건이 남아 있으면 계속 떠 있는다.
+        /// 창이 보이고 Windows 의 화면 효과가 켜져 있으면 부드럽게 움직인다.
         /// </summary>
-        public void 접기(bool 접기)
+        public void 접기(bool 접을지)
         {
-            접힘 = 접기;
-            int bottom = Bounds.Bottom;
-            int h = 접기 ? 접힌높이 : 높이;
-            Bounds = new Rectangle(Left, bottom - h, 폭, h);
-            접기버튼.Text = 접기 ? "▴" : "▾";
-            // 접으면 '기한 알림 N건' 만 남긴다 (사용자 요청 2026-09-16). 줄 어디를 눌러도 펼쳐진다.
-            부가보임값 = !접기;
-            날짜.Visible = !접기;
-            경고.Visible = !접기 && !string.IsNullOrEmpty(warningText);
-            설정버튼.Visible = !접기;
-            접기버튼.Visible = !접기;
-            Cursor = 접기 ? Cursors.Hand : Cursors.Default;
-            모양맞추기();
-            Invalidate();
+            접기(접을지, Visible && IsHandleCreated && SystemInformation.UIEffectsEnabled);
         }
+
+        public void 접기(bool 접을지, bool 움직임)
+        {
+            접힘 = 접을지;
+            접기버튼.Text = 접을지 ? "▴" : "▾";
+            // 접으면 '기한 알림 N건' 과 설정·펼치기 버튼만 남긴다 (두 버튼은 숨기지 않는다, 사용자 요청 2026-09-16). 줄 빈 곳이나 제목을 눌러도 펼쳐진다.
+            부가보임값 = !접을지;
+            날짜.Visible = !접을지;
+            경고.Visible = !접을지 && !string.IsNullOrEmpty(warningText);
+            Cursor = 접을지 ? Cursors.Hand : Cursors.Default;
+            제목.Cursor = Cursor;
+            건수.Cursor = Cursor;
+            접힌풍선.SetToolTip(제목, 접을지 ? "눌러서 펼치기" : null);
+            접힌풍선.SetToolTip(건수, 접을지 ? "눌러서 펼치기" : null);
+
+            시작높이 = Height;
+            목표높이 = 접을지 ? 접힌높이 : 높이;
+            if (!움직임 || 시작높이 == 목표높이)
+            {
+                if (접기타이머 != null) 접기타이머.Stop();
+                높이적용(목표높이);
+                return;
+            }
+            if (접기타이머 == null)
+            {
+                접기타이머 = new Timer();
+                접기타이머.Interval = 10;
+                접기타이머.Tick += delegate { 애니단계(접기시계.ElapsedMilliseconds / (double)접기ms); };
+            }
+            // 도는 중에 다시 누르면 지금 높이에서 반대로 되돌아간다.
+            접기시계 = System.Diagnostics.Stopwatch.StartNew();
+            접기타이머.Start();
+        }
+
+        /// <summary>애니메이션의 t(0~1) 지점으로 높이를 맞춘다. 1 이상이면 끝낸다 (시험에서도 부른다).</summary>
+        public void 애니단계(double t)
+        {
+            double e = 부드럽게(t);
+            높이적용((int)Math.Round(시작높이 + (목표높이 - 시작높이) * e));
+            if (t >= 1 && 접기타이머 != null) 접기타이머.Stop();
+        }
+
+        /// <summary>ease-out cubic — 처음엔 빠르고 끝에서 천천히 멈춘다.</summary>
+        public static double 부드럽게(double t)
+        {
+            if (t <= 0) return 0;
+            if (t >= 1) return 1;
+            double u = 1 - t;
+            return 1 - u * u * u;
+        }
+
+        void 높이적용(int h)
+        {
+            if (h == Height) return;
+            int bottom = Bounds.Bottom;
+            Bounds = new Rectangle(Left, bottom - h, 폭, h);
+            모양맞추기();
+            // 커지면서 새로 드러난 카드 영역이 그려지기 전에 검게 비치지 않도록, 자식까지 지금 바로 다시 그린다.
+            if (IsHandleCreated)
+                RedrawWindow(Handle, IntPtr.Zero, IntPtr.Zero, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        }
+
+        const uint RDW_INVALIDATE = 0x0001, RDW_ERASE = 0x0004, RDW_ALLCHILDREN = 0x0080, RDW_UPDATENOW = 0x0100;
+
+        [DllImport("user32.dll")]
+        static extern bool RedrawWindow(IntPtr hWnd, IntPtr rect, IntPtr rgn, uint flags);
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -696,6 +756,7 @@ namespace PaymentAlert
             if (disposing)
             {
                 넘김타이머.Dispose();
+                if (접기타이머 != null) 접기타이머.Dispose();
                 메뉴.Dispose();
             }
             base.Dispose(disposing);
