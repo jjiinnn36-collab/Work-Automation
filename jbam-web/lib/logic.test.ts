@@ -5,7 +5,7 @@ import assert from "node:assert/strict"
 import {
   won, md, parseWon, stepStates, stepTooltip, yearStatus, sortRemaining, matchYearFilter,
   shiftMonth, presetRange, parseMonths, groupSum, previewKind, csvCell, toCsv, safeUrl,
-  viewFromHash, eventSummary, occurrenceCsv,
+  viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary,
 } from "./logic.ts"
 import type { Occurrence } from "./types.ts"
 
@@ -132,4 +132,19 @@ test("링크·해시 경로·기록 요약", () => {
   assert.equal(viewFromHash(""), "alerts")
   assert.equal(eventSummary({ action: "진행", from: "고지서수령", to: "전표발행", detail: "전표발행" }), "고지서수령 → 전표발행")
   assert.equal(eventSummary({ action: "금액", from: null, to: null, detail: "1,000원" }), "1,000원")
+})
+
+test("항목 창: 선택 카드 이름과 한 줄 요약 (ADR-0020)", () => {
+  assert.deepEqual(FLOW_CARDS.map((c) => c.flow), ["신고납부", "납부만", "제출만", "사용자설정"])
+  assert.equal(flowLabel("신고납부"), "신고 후 납부")
+  assert.equal(flowLabel("사용자설정"), "직접 정하기")
+  assert.equal(flowLabel("모름"), "모름")
+  assert.equal(dayLabel("말일"), "말일")
+  assert.equal(dayLabel("20"), "20일")
+  const base = { name: "회비", month: "5", day: "20", flow: "납부만", paid: true, rule: "변동", fixed: "", lead: "3" }
+  assert.equal(itemSummary(base), "회비 · 매년 5월 20일 · 납부만 · 변동 · 3영업일 전 알림")
+  assert.equal(itemSummary({ ...base, rule: "고정", fixed: "1234560" }), "회비 · 매년 5월 20일 · 납부만 · 고정 1,234,560원 · 3영업일 전 알림")
+  assert.equal(itemSummary({ ...base, rule: "고정", fixed: "" }), "회비 · 매년 5월 20일 · 납부만 · 고정 (금액 필요) · 3영업일 전 알림")
+  assert.equal(itemSummary({ ...base, flow: "제출만", paid: false, day: "말일" }), "회비 · 매년 5월 말일 · 제출만 · 3영업일 전 알림")
+  assert.equal(itemSummary({ ...base, name: " ", month: "5,6,7" }), "이름 없음 · 매년 5,6,7월 20일 · 납부만 · 변동 · 3영업일 전 알림")
 })

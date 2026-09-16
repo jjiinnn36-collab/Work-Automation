@@ -198,3 +198,41 @@ export function eventSummary(e: { action: string; from: string | null; to: strin
   if ((e.action === "진행" || e.action === "되돌리기") && e.from && e.to) return `${e.from} → ${e.to}`
   return e.detail
 }
+
+// ── 항목 추가 창 (ADR-0020) ──
+
+/** 진행흐름 선택 카드: 저장 값은 그대로, 보이는 이름만 쉬운 말로. */
+export const FLOW_CARDS: { flow: "신고납부" | "납부만" | "제출만" | "사용자설정"; label: string; steps: string }[] = [
+  { flow: "신고납부", label: "신고 후 납부", steps: "신고서 작성 → 신고 → 전표 → 납부" },
+  { flow: "납부만", label: "납부만", steps: "고지서 → 전표 → 납부" },
+  { flow: "제출만", label: "제출만", steps: "자료 작성 → 제출 · 금액 없음" },
+  { flow: "사용자설정", label: "직접 정하기", steps: "단계 수와 이름을 정함" },
+]
+
+export function flowLabel(flow: string): string {
+  return FLOW_CARDS.find((c) => c.flow === flow)?.label ?? flow
+}
+
+/** 기한일 선택지 표시: "말일" 은 그대로, 숫자는 "20일". */
+export function dayLabel(day: string): string {
+  return day === "말일" ? "말일" : `${day}일`
+}
+
+/**
+ * 항목 창 맨 아래 한 줄 요약. 저장 전에 무엇이 만들어질지 확인한다.
+ * 예) "회비 · 매년 5월 20일 · 납부만 · 변동 · 3영업일 전 알림"
+ */
+export function itemSummary(s: {
+  name: string; month: string; day: string; flow: string; paid: boolean; rule: string; fixed: string; lead: string
+}): string {
+  const parts = [s.name.trim() || "이름 없음"]
+  const m = s.month.trim() || "?"
+  parts.push(`매년 ${m}월 ${dayLabel(s.day)}`)
+  parts.push(flowLabel(s.flow))
+  if (s.paid) {
+    const fixed = parseWon(s.fixed)
+    parts.push(s.rule === "고정" ? (fixed !== null ? `고정 ${won(fixed)}원` : "고정 (금액 필요)") : "변동")
+  }
+  parts.push(`${s.lead.trim() || "?"}영업일 전 알림`)
+  return parts.join(" · ")
+}
