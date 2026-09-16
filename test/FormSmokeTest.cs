@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
 using PaymentAlert;
@@ -26,12 +27,63 @@ namespace PaymentAlert.Tests
             else { failed++; Console.WriteLine("  FAIL  " + name); }
         }
 
-        /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
         static void 누름(Button b)
         {
             // 창을 띄우기 전에는 PerformClick 이 무시되므로 Click 처리기를 직접 부른다.
             typeof(Button).GetMethod("OnClick", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
                 .Invoke(b, new object[] { EventArgs.Empty });
+        }
+
+        /// <summary>감춰진 이벤트 처리기(OnMouseEnter 등)를 직접 부른다 — 창을 띄우지 않고 상태 전환을 본다.</summary>
+        static void 부름(Control c, string 이름, EventArgs e)
+        {
+            c.GetType().GetMethod(이름, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                null, new Type[] { e.GetType() }, null).Invoke(c, new object[] { e });
+        }
+
+        /// <summary>모든 버튼 공통 규칙 (ADR-0015 3-3): 사각 자국 없음, 상태 전환, 기본 버튼 테 없음.</summary>
+        static void 버튼공통()
+        {
+            Console.WriteLine("\n[GUI-6] 버튼 공통: 둘레는 부모 그림 그대로, 상태 전환이 모두 같다");
+            var 판 = new Panel();
+            판.BackColor = Color.White;               // BackColor 와 실제 그림이 다른 부모 (카드·바닥 줄과 같은 경우)
+            판.Size = new Size(120, 60);
+            판.Paint += delegate(object s, PaintEventArgs e) { e.Graphics.Clear(Color.Red); };
+            var b = new PillButton();
+            b.Text = "보통";
+            Ui.알약(b, false);
+            b.Bounds = new Rectangle(10, 10, 80, 28);
+            판.Controls.Add(b);
+            using (var bmp = new Bitmap(판.Width, 판.Height))
+            {
+                판.DrawToBitmap(bmp, new Rectangle(0, 0, 판.Width, 판.Height));
+                Check("버튼 사각 모서리는 부모가 그린 색 (사각 자국 없음)", bmp.GetPixel(11, 11).ToArgb(), Color.Red.ToArgb());
+                Check("알약 안쪽은 흰색", bmp.GetPixel(18, 24).ToArgb(), Ui.캔버스.ToArgb());   // 왼쪽 반원 안, 글자에서 먼 곳
+            }
+
+            Check("처음은 보통", b.상태, "보통");
+            부름(b, "OnMouseEnter", EventArgs.Empty);
+            Check("마우스 올림", b.상태, "올림");
+            부름(b, "OnMouseDown", new MouseEventArgs(MouseButtons.Left, 1, 5, 5, 0));
+            Check("누름", b.상태, "눌림");
+            부름(b, "OnMouseCaptureChanged", EventArgs.Empty);
+            Check("메뉴·대화상자가 마우스를 가져가면 누름이 풀림", b.상태, "올림");
+            부름(b, "OnMouseLeave", EventArgs.Empty);
+            Check("마우스가 나가면 보통", b.상태, "보통");
+            부름(b, "OnMouseDown", new MouseEventArgs(MouseButtons.Right, 1, 5, 5, 0));
+            Check("오른쪽 누름은 누름으로 보지 않음", b.상태, "보통");
+            부름(b, "OnMouseEnter", EventArgs.Empty);
+            b.Enabled = false;
+            Check("꺼지면 꺼짐 (올림이 남지 않음)", b.상태, "꺼짐");
+            Check("꺼진 버튼은 손 모양 커서가 아님", b.Cursor, Cursors.Default);
+            b.Enabled = true;
+            Check("다시 켜면 보통", b.상태, "보통");
+            b.NotifyDefault(true);
+            bool 기본 = (bool)typeof(ButtonBase).GetProperty("IsDefault",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(b, null);
+            CheckTrue("기본 버튼 굵은 테 없음", !기본);
+            CheckTrue("초점이 없으면 초점 테 없음", !b.초점테보임);
+            판.Dispose();
         }
 
         /// <summary>버튼이 중첩 패널 안에 있어도 찾는다. 배치가 바뀌어도 시험이 깨지지 않게.</summary>
@@ -235,6 +287,7 @@ namespace PaymentAlert.Tests
             form.Dispose();
 
             코너팝업(cal, master, store);
+            버튼공통();
 
             Console.WriteLine("\n" + new string('=', 50));
             Console.WriteLine(string.Format("  통과 {0}건 / 실패 {1}건", passed, failed));

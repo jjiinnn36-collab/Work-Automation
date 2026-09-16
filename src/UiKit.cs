@@ -24,6 +24,9 @@ namespace PaymentAlert
         public static readonly Color 아주흐림 = Color.FromArgb(0xa1, 0xa1, 0xa1);
         public static readonly Color 주요     = Color.FromArgb(0x17, 0x17, 0x17);  // --primary
         public static readonly Color 강조     = Color.FromArgb(0x15, 0x5d, 0xfc);  // --action (지금 할 일)
+        public static readonly Color 강조올림 = Color.FromArgb(0x14, 0x47, 0xe6);  // 주요 버튼 마우스 올림
+        public static readonly Color 강조눌림 = Color.FromArgb(0x19, 0x3c, 0xb8);  // 주요 버튼 누름
+        public static readonly Color 초점테   = Color.FromArgb(0x8e, 0xc5, 0xff);  // --ring (키보드 초점)
         public static readonly Color 위험     = Color.FromArgb(0xe7, 0x00, 0x0b);  // --destructive
         public static readonly Color 경고글씨 = Color.FromArgb(0x96, 0x5a, 0x00);
 
@@ -327,6 +330,28 @@ namespace PaymentAlert
     {
         public bool 주요;
         bool 눌림;
+        bool 올림;
+
+        /// <summary>
+        /// 지금 그리는 상태: 꺼짐 / 눌림 / 올림 / 보통. 모든 버튼이 같은 규칙으로 바뀐다 (ADR-0015 3-3).
+        /// 키보드 초점은 상태와 따로 테(초점테)로 덧그린다.
+        /// </summary>
+        public string 상태
+        {
+            get
+            {
+                if (!Enabled) return "꺼짐";
+                if (눌림) return "눌림";
+                if (올림) return "올림";
+                return "보통";
+            }
+        }
+
+        /// <summary>키보드로 초점이 왔을 때만 테를 그린다. 마우스로 누른 뒤에는 그리지 않는다.</summary>
+        public bool 초점테보임 { get { return Focused && ShowFocusCues && Enabled; } }
+
+        // 폼의 기본 버튼(Enter)이 되면 Windows 가 굵은 테를 요구한다. 이 앱은 기본 버튼을 쓰지 않는다.
+        public override void NotifyDefault(bool value) { base.NotifyDefault(false); }
 
         public PillButton()
         {
@@ -341,9 +366,22 @@ namespace PaymentAlert
                      | ControlStyles.SupportsTransparentBackColor, true);
         }
 
-        protected override void OnMouseDown(MouseEventArgs e) { 눌림 = true; Invalidate(); base.OnMouseDown(e); }
+        protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) { 눌림 = true; Invalidate(); } base.OnMouseDown(e); }
         protected override void OnMouseUp(MouseEventArgs e) { 눌림 = false; Invalidate(); base.OnMouseUp(e); }
-        protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+        protected override void OnMouseEnter(EventArgs e) { 올림 = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { 올림 = false; Invalidate(); base.OnMouseLeave(e); }
+        // 메뉴·대화상자가 마우스를 가져가면 MouseUp 이 오지 않는다 — 눌림·올림이 남지 않게 푼다.
+        protected override void OnMouseCaptureChanged(EventArgs e) { 눌림 = false; Invalidate(); base.OnMouseCaptureChanged(e); }
+        protected override void OnLostFocus(EventArgs e) { 눌림 = false; Invalidate(); base.OnLostFocus(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnEnabledChanged(EventArgs e)
+        {
+            if (!Enabled) { 눌림 = false; 올림 = false; }
+            Cursor = Enabled ? Cursors.Hand : Cursors.Default;
+            Invalidate();
+            base.OnEnabledChanged(e);
+        }
+        protected override void OnVisibleChanged(EventArgs e) { if (!Visible) { 눌림 = false; 올림 = false; } base.OnVisibleChanged(e); }
 
         protected override void OnPaint(PaintEventArgs e)
         {
@@ -352,28 +390,50 @@ namespace PaymentAlert
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
 
-            // Button 은 Color.Transparent 를 제대로 처리하지 않아 모서리에 사각 자국이 남는다.
-            // 부모 배경색으로 먼저 칠해 알약 바깥이 카드와 같은 색이 되게 한다.
-            Color 뒷배경 = Parent != null ? Parent.BackColor : Ui.캔버스;
-            using (var bg = new SolidBrush(뒷배경)) g.FillRectangle(bg, ClientRectangle);
+            // 알약 바깥은 부모가 실제로 그린 그림을 그대로 깐다.
+            // 예전에는 부모 BackColor 한 색으로 사각형을 칠해, 부모가 그린 테두리·선이 버튼 둘레에서
+            // 사각형으로 끊기고 가장자리에 사각 외곽선이 보였다 (사용자 제보 2026-09-16).
+            if (Parent != null)
+            {
+                GraphicsState 저장 = g.Save();
+                g.TranslateTransform(-Left, -Top);
+                var 영역 = new PaintEventArgs(g, Bounds);
+                InvokePaintBackground(Parent, 영역);
+                InvokePaint(Parent, 영역);
+                g.Restore(저장);
+            }
             Color 채움, 테두리, 글씨;
-            if (!Enabled)      { 채움 = Ui.연한선;  테두리 = Ui.테두리; 글씨 = Ui.아주흐림; }
-            else if (주요)      { 채움 = Ui.강조;    테두리 = Ui.강조;   글씨 = Ui.캔버스; }
-            else               { 채움 = 눌림 ? Ui.양피지 : Ui.캔버스; 테두리 = Ui.테두리; 글씨 = ForeColor; }
+            string s = 상태;
+            if (s == "꺼짐")   { 채움 = Ui.연한선; 테두리 = Ui.테두리; 글씨 = Ui.아주흐림; }
+            else if (주요)     { 채움 = s == "눌림" ? Ui.강조눌림 : s == "올림" ? Ui.강조올림 : Ui.강조; 테두리 = 채움; 글씨 = Ui.캔버스; }
+            else               { 채움 = s == "눌림" ? Ui.테두리 : s == "올림" ? Ui.양피지 : Ui.캔버스; 테두리 = Ui.테두리; 글씨 = ForeColor; }
 
             var r = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (var p = new GraphicsPath())
+            using (var p = 알약모양(r))
             {
-                int d = r.Height;
-                p.AddArc(r.X, r.Y, d, d, 90, 180);
-                p.AddArc(r.Right - d, r.Y, d, d, 270, 180);
-                p.CloseFigure();
                 using (var br = new SolidBrush(채움)) g.FillPath(br, p);
                 using (var pen = new Pen(테두리, 1f)) g.DrawPath(pen, p);
+            }
+            if (초점테보임)
+            {
+                // 사각 점선 대신 알약을 따라가는 2px 테 (웹의 focus-visible ring 과 같은 색)
+                using (var p = 알약모양(new Rectangle(1, 1, Width - 3, Height - 3)))
+                using (var pen = new Pen(Ui.초점테, 2f))
+                    g.DrawPath(pen, p);
             }
 
             TextRenderer.DrawText(g, Text, Font, ClientRectangle, 글씨,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+        }
+
+        static GraphicsPath 알약모양(Rectangle r)
+        {
+            var p = new GraphicsPath();
+            int d = r.Height;
+            p.AddArc(r.X, r.Y, d, d, 90, 180);
+            p.AddArc(r.Right - d, r.Y, d, d, 270, 180);
+            p.CloseFigure();
+            return p;
         }
     }
 }

@@ -158,6 +158,9 @@ namespace PaymentAlert
                     {
                         menu.Items.Add("웹 화면 열기", null, delegate { OpenBrowser(server.Url); });
                         menu.Items.Add("끄기", null, delegate { Application.ExitThread(); });
+                        menu.Font = Ui.글꼴(12);
+                        Ui.메뉴꾸미기(menu);
+                        Ui.메뉴항목정리(menu);
 
                         Icon appIcon = null;
                         try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }

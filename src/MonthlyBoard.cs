@@ -389,6 +389,7 @@ namespace PaymentAlert
             // 실수로 완료 처리하면 팝업에 더는 뜨지 않아 프로그램이 조용해진다.
             // 그 상태로 기한이 지나가는 것이 이 프로그램에서 가장 위험한 실패다.
             var menu = new ContextMenuStrip();
+            Ui.메뉴꾸미기(menu);
             string 현재 = StageName(o, status);
 
             var 되돌리기 = new ToolStripMenuItem("이전 단계로 되돌리기");
