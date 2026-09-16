@@ -84,6 +84,27 @@ namespace PaymentAlert.Tests
             CheckTrue("기본 버튼 굵은 테 없음", !기본);
             CheckTrue("초점이 없으면 초점 테 없음", !b.초점테보임);
             판.Dispose();
+
+            Console.WriteLine("\n[GUI-12] 옅은 채움 버튼 모양");
+            var 판2 = new Panel();
+            판2.BackColor = Color.White;
+            판2.Size = new Size(120, 60);
+            판2.Paint += delegate(object s, PaintEventArgs e) { e.Graphics.Clear(Color.Red); };
+            var t = new PillButton();
+            t.Text = "대기";
+            Ui.알약(t, false);
+            t.옅은채움 = true;
+            t.반경 = 8;
+            t.Bounds = new Rectangle(10, 10, 80, 28);
+            판2.Controls.Add(t);
+            using (var bmp = new Bitmap(판2.Width, 판2.Height))
+            {
+                판2.DrawToBitmap(bmp, new Rectangle(0, 0, 판2.Width, 판2.Height));
+                Check("안쪽은 옅은 회색 바탕", bmp.GetPixel(14, 30).ToArgb(), Ui.옅은바탕.ToArgb());
+                Check("모서리 바깥은 부모 그림 (둥근 사각형)", bmp.GetPixel(10, 10).ToArgb(), Color.Red.ToArgb());
+                Check("테두리 없음 (가장자리 안쪽도 바탕색)", bmp.GetPixel(50, 11).ToArgb(), Ui.옅은바탕.ToArgb());
+            }
+            판2.Dispose();
         }
 
         /// <summary>창을 띄우기 전이라 Visible 은 늘 false — 컨트롤이 보이기를 요청받았는지(내부 상태)를 읽는다.</summary>
@@ -247,6 +268,11 @@ namespace PaymentAlert.Tests
             Check("진행 막대는 끝낸 지점/전체", form.막대문구, "1/" + Stages.For(a).Length);
             Check("머리에는 위치", form.위치문구, "1/3");
             CheckTrue("자료 경고·밀린 건이 없으면 '!' 없음", !form.알림있음);
+
+            Console.WriteLine("\n[GUI-12] 버튼 줄 (ADR-0018 B안)");
+            Check("행동 버튼 높이 28", form.행동버튼높이, 28);
+            Check("모서리 8 (알약 아님)", form.행동버튼반경, 8);
+            CheckTrue("'오늘은 대기' 는 옅은 채움 (글자만이 아님)", form.대기옅은채움);
             CheckTrue("다 고르기 전에는 완료 장 아님", !form.완료보임);
             form.이동(1);
             Check("넘기면 위치도 바뀜", form.위치문구, "2/3");
@@ -276,6 +302,7 @@ namespace PaymentAlert.Tests
             Console.WriteLine("\n[GUI-2] 고르면 다음 남은 건으로, 다 고르면 닫기");
             rows[0].Status.최종확인일 = today;          // 첫 건 대기
             form.RefreshState();
+            Check("고른 뒤 표시는 ✓ 흐린 글씨", form.처리표시문구, "✓ 내일 다시 알림");
             Check("고른 건은 회색", dots.상태(0) == "현재-지남" ? "현재" : dots.상태(0), "현재");
             Check("다음 남은 건 = 1", form.다음남은건(0), 1);
             form.이동(1);

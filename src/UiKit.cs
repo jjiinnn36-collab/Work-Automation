@@ -27,6 +27,10 @@ namespace PaymentAlert
         public static readonly Color 강조올림 = Color.FromArgb(0x14, 0x47, 0xe6);  // 주요 버튼 마우스 올림
         public static readonly Color 강조눌림 = Color.FromArgb(0x19, 0x3c, 0xb8);  // 주요 버튼 누름
         public static readonly Color 초점테   = Color.FromArgb(0x8e, 0xc5, 0xff);  // --ring (키보드 초점)
+        // 두 번째 버튼(옅은 채움, 웹의 secondary) — ADR-0018
+        public static readonly Color 옅은바탕     = Color.FromArgb(0xf4, 0xf4, 0xf5);
+        public static readonly Color 옅은바탕올림 = Color.FromArgb(0xe9, 0xe9, 0xeb);
+        public static readonly Color 옅은바탕눌림 = Color.FromArgb(0xe0, 0xe0, 0xe3);
         public static readonly Color 위험     = Color.FromArgb(0xe7, 0x00, 0x0b);  // --destructive
         public static readonly Color 경고글씨 = Color.FromArgb(0x96, 0x5a, 0x00);
 
@@ -49,7 +53,6 @@ namespace PaymentAlert
             return 글꼴이름;
         }
 
-        /// <summary>웹 시안은 px 로 적혀 있다. WinForms 는 pt 를 쓰므로 96dpi 기준으로 바꾼다.</summary>
         /// <summary>이 PC 에 그 이름의 글꼴이 설치돼 있는지.</summary>
         public static bool 글꼴있음(string 이름)
         {
@@ -59,14 +62,13 @@ namespace PaymentAlert
             return false;
         }
 
+        /// <summary>웹 시안은 px 로 적혀 있다. WinForms 는 pt 를 쓰므로 96dpi 기준으로 바꾼다.</summary>
         public static Font 글꼴(float px, bool 굵게)
         {
             return new Font(글꼴찾기(), px * 0.75f,
                             굵게 ? FontStyle.Bold : FontStyle.Regular, GraphicsUnit.Point);
         }
         public static Font 글꼴(float px) { return 글꼴(px, false); }
-
-        // ── 알약 버튼 ──
 
         // ── 알약 버튼 ──
         // 그리기는 PillButton 이 직접 한다. 여기서는 역할과 글꼴만 정한다.
@@ -626,6 +628,10 @@ namespace PaymentAlert
         public bool 주요;
         /// <summary>테두리·바탕 없이 글자만 (두 번째 선택지·아이콘). 올리거나 누르면 옅은 바탕이 생긴다.</summary>
         public bool 글자형;
+        /// <summary>옅은 회색 바탕 + 검정 글씨, 테두리 없음 — 중요한 두 번째 행동 (ADR-0018).</summary>
+        public bool 옅은채움;
+        /// <summary>모서리 반경. 음수면 완전한 알약(높이의 절반).</summary>
+        public int 반경 = -1;
         bool 눌림;
         bool 올림;
 
@@ -705,7 +711,12 @@ namespace PaymentAlert
             else if (주요)     { 채움 = s == "눌림" ? Ui.강조눌림 : s == "올림" ? Ui.강조올림 : Ui.강조; 테두리 = 채움; 글씨 = Ui.캔버스; }
             else               { 채움 = s == "눌림" ? Ui.테두리 : s == "올림" ? Ui.양피지 : Ui.캔버스; 테두리 = Ui.테두리; 글씨 = ForeColor; }
 
-            if (글자형 && !주요)
+            if (옅은채움 && !주요)
+            {
+                채움 = s == "눌림" ? Ui.옅은바탕눌림 : s == "올림" ? Ui.옅은바탕올림 : s == "꺼짐" ? Ui.연한선 : Ui.옅은바탕;
+                테두리 = Color.Empty;
+            }
+            else if (글자형 && !주요)
             {
                 // 보통·꺼짐은 바탕 없이 글자만. 올림·누름만 옅은 바탕.
                 if (s == "꺼짐") 채움 = Color.Empty;
@@ -714,7 +725,7 @@ namespace PaymentAlert
             }
 
             var r = new Rectangle(0, 0, Width - 1, Height - 1);
-            using (var p = 알약모양(r))
+            using (var p = 모양(r))
             {
                 if (채움 != Color.Empty) using (var br = new SolidBrush(채움)) g.FillPath(br, p);
                 if (테두리 != Color.Empty) using (var pen = new Pen(테두리, 1f)) g.DrawPath(pen, p);
@@ -722,7 +733,7 @@ namespace PaymentAlert
             if (초점테보임)
             {
                 // 사각 점선 대신 알약을 따라가는 2px 테 (웹의 focus-visible ring 과 같은 색)
-                using (var p = 알약모양(new Rectangle(1, 1, Width - 3, Height - 3)))
+                using (var p = 모양(new Rectangle(1, 1, Width - 3, Height - 3)))
                 using (var pen = new Pen(Ui.초점테, 2f))
                     g.DrawPath(pen, p);
             }
@@ -731,12 +742,23 @@ namespace PaymentAlert
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
         }
 
-        static GraphicsPath 알약모양(Rectangle r)
+        GraphicsPath 모양(Rectangle r)
         {
             var p = new GraphicsPath();
-            int d = r.Height;
-            p.AddArc(r.X, r.Y, d, d, 90, 180);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 180);
+            if (반경 < 0 || 반경 * 2 >= r.Height)
+            {
+                int d = r.Height;
+                p.AddArc(r.X, r.Y, d, d, 90, 180);
+                p.AddArc(r.Right - d, r.Y, d, d, 270, 180);
+            }
+            else
+            {
+                int d = Math.Max(1, 반경 * 2);
+                p.AddArc(r.X, r.Y, d, d, 180, 90);
+                p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+                p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+                p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+            }
             p.CloseFigure();
             return p;
         }

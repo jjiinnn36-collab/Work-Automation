@@ -69,6 +69,14 @@ namespace PaymentAlert
 
         const int 머리높이 = 44;
         const int 줄높이 = 32;
+        const int 버튼높이 = 28;
+        const int 버튼y = 98;       // 진행 막대(70~84) 아래 14px
+
+        /// <summary>행동 버튼 줄의 모양 (시험용): 주요 버튼 높이·모서리, 두 번째 버튼이 옅은 채움인지.</summary>
+        public int 행동버튼높이 { get { return 진행.Height; } }
+        public int 행동버튼반경 { get { return 진행.반경; } }
+        public bool 대기옅은채움 { get { return 대기.옅은채움 && !대기.글자형; } }
+        public string 처리표시문구 { get { return 처리표시.Text; } }
         static readonly Font 위치글꼴 = Ui.글꼴(12);
         static readonly Font 건수글꼴 = Ui.글꼴(13, true);
 
@@ -186,27 +194,28 @@ namespace PaymentAlert
             단계막대.Size = new Size(폭 - 32, 14);
             본문.Controls.Add(단계막대);
 
-            진행 = 알약("", true, 13);
-            진행.Size = new Size(96, 34);
-            진행.Location = new Point(16, 94);
+            // 버튼 줄 (ADR-0018 B안): 28px · 모서리 8 · 12px. 주요는 파랑 하나, 두 번째는 옅은 채움.
+            진행 = 알약("", true, 12);
+            진행.반경 = 8;
+            진행.Size = new Size(84, 버튼높이);
+            진행.Location = new Point(16, 버튼y);
             진행.Click += delegate { 적용후넘김(현재행(), "진행"); };
             본문.Controls.Add(진행);
 
-            대기 = 알약("오늘은 대기", false, 13);
-            대기.글자형 = true;
-            대기.ForeColor = Ui.흐린글씨;
+            대기 = 알약("오늘은 대기", false, 12);
+            대기.옅은채움 = true;
+            대기.반경 = 8;
             대기.Click += delegate { 적용후넘김(현재행(), "대기"); };
             본문.Controls.Add(대기);
 
+            // 고른 뒤 표시는 버튼과 헷갈리지 않게 바탕 없이 흐린 글씨 + ✓.
             처리표시 = 라벨("", 12, true, Ui.흐린글씨);
-            처리표시.BackColor = Ui.양피지;
-            처리표시.Padding = new Padding(10, 5, 10, 5);
-            처리표시.Location = new Point(16, 100);
+            처리표시.Location = new Point(14, 버튼y + 6);
             본문.Controls.Add(처리표시);
 
-            되돌리기 = 알약("되돌리기", false, 13);
-            되돌리기.글자형 = true;
-            되돌리기.ForeColor = Ui.흐린글씨;
+            되돌리기 = 알약("되돌리기", false, 12);
+            되돌리기.옅은채움 = true;
+            되돌리기.반경 = 8;
             되돌리기.Click += delegate { 되돌리기누름(); };
             본문.Controls.Add(되돌리기);
 
@@ -216,8 +225,9 @@ namespace PaymentAlert
             더보기 = 알약("⋯", false, 14);
             더보기.글자형 = true;
             더보기.ForeColor = Ui.흐린글씨;
-            더보기.Size = new Size(40, 34);
-            더보기.Location = new Point(폭 - 12 - 40, 94);
+            더보기.반경 = 8;
+            더보기.Size = new Size(버튼높이, 버튼높이);
+            더보기.Location = new Point(폭 - 16 - 버튼높이, 버튼y);
             더보기.Click += delegate { 메뉴채우기(); 메뉴.Show(더보기, new Point(0, 더보기.Height)); };
             본문.Controls.Add(더보기);
 
@@ -241,17 +251,18 @@ namespace PaymentAlert
             완료설명.Location = new Point(16, 48);
             완료판.Controls.Add(완료설명);
 
-            closeButton = 알약("닫기", true, 13);
-            closeButton.Size = new Size(76, 34);
+            closeButton = 알약("닫기", true, 12);
+            closeButton.반경 = 8;
+            closeButton.Size = new Size(64, 버튼높이);
             closeButton.Location = new Point(16, 90);
             closeButton.Click += delegate { TryClose(); };
             완료판.Controls.Add(closeButton);
 
-            웹보기 = 알약("웹에서 보기", false, 13);
-            웹보기.글자형 = true;
-            웹보기.ForeColor = Ui.흐린글씨;
-            웹보기.Size = new Size(TextRenderer.MeasureText(웹보기.Text, 웹보기.Font).Width + 22, 34);
-            웹보기.Location = new Point(closeButton.Right + 4, 90);
+            웹보기 = 알약("웹에서 보기", false, 12);
+            웹보기.옅은채움 = true;
+            웹보기.반경 = 8;
+            웹보기.Size = new Size(TextRenderer.MeasureText(웹보기.Text, 웹보기.Font).Width + 24, 버튼높이);
+            웹보기.Location = new Point(closeButton.Right + 6, 90);
             웹보기.Click += delegate { if (웹열기 != null) 웹열기(); };
             완료판.Controls.Add(웹보기);
 
@@ -269,6 +280,7 @@ namespace PaymentAlert
             이전버튼 = 알약("‹", false, 16);
             이전버튼.글자형 = true;
             이전버튼.ForeColor = Ui.잉크;
+            이전버튼.반경 = 8;
             이전버튼.Size = new Size(32, 26);
             이전버튼.Location = new Point(8, 3);
             이전버튼.Click += delegate { 넘기기(-1); };
@@ -277,6 +289,7 @@ namespace PaymentAlert
             다음버튼 = 알약("›", false, 16);
             다음버튼.글자형 = true;
             다음버튼.ForeColor = Ui.잉크;
+            다음버튼.반경 = 8;
             다음버튼.Size = new Size(32, 26);
             다음버튼.Location = new Point(폭 - 8 - 32, 3);
             다음버튼.Click += delegate { 넘기기(1); };
@@ -710,25 +723,28 @@ namespace PaymentAlert
             진행보임 = !handled && !done;
             진행.Visible = 진행보임;
             대기.Visible = 진행보임;
-            처리표시.Visible = handled || done;
-            되돌리기.Visible = (handled || done) && row.Status.단계 > 0;
+            // 창을 띄우기 전에는 Visible 이 늘 false 라 조건은 따로 든다.
+            bool 처리보임 = handled || done;
+            bool 되돌리기보임 = 처리보임 && row.Status.단계 > 0;
+            처리표시.Visible = 처리보임;
+            되돌리기.Visible = 되돌리기보임;
 
             if (진행보임)
             {
                 진행.Text = row.다음행동 ?? "";
-                진행.Width = Math.Max(84, TextRenderer.MeasureText(진행.Text, 진행.Font).Width + 36);
-                대기.Size = new Size(TextRenderer.MeasureText(대기.Text, 대기.Font).Width + 20, 34);
-                대기.Location = new Point(진행.Right + 4, 94);
+                진행.Width = Math.Max(72, TextRenderer.MeasureText(진행.Text, 진행.Font).Width + 26);
+                대기.Size = new Size(TextRenderer.MeasureText(대기.Text, 대기.Font).Width + 24, 버튼높이);
+                대기.Location = new Point(진행.Right + 6, 버튼y);
             }
-            if (처리표시.Visible)
+            if (처리보임)
             {
                 bool 대기함 = !row.오늘단계변경 && !done;
-                처리표시.Text = done ? "모두 끝남" : (대기함 ? "내일 다시 알림" : "처리함");
+                처리표시.Text = "✓ " + (done ? "모두 끝남" : (대기함 ? "내일 다시 알림" : "처리함"));
             }
-            if (되돌리기.Visible)
+            if (되돌리기보임)
             {
-                되돌리기.Size = new Size(TextRenderer.MeasureText(되돌리기.Text, 되돌리기.Font).Width + 20, 34);
-                되돌리기.Location = new Point(처리표시.Left + 처리표시.PreferredWidth + 6, 94);
+                되돌리기.Size = new Size(TextRenderer.MeasureText(되돌리기.Text, 되돌리기.Font).Width + 24, 버튼높이);
+                되돌리기.Location = new Point(처리표시.Left + 처리표시.PreferredWidth + 8, 버튼y);
             }
         }
 
