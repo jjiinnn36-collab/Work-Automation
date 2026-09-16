@@ -727,6 +727,27 @@ namespace PaymentAlert
         }
 
         /// <summary>
+        /// '오늘은 대기' 를 취소한다. 단계는 그대로 두고 오늘 확인 표시만 지워 다시 묻게 한다 (ADR-0019).
+        /// 오늘 대기한 건이 아니면 거절한다.
+        /// </summary>
+        public StatusRecord 대기취소(int 연도, string id, int 기대단계, DateTime 지금, DateTime 오늘, string 출처)
+        {
+            StatusRecord result = null;
+            c.Tx(delegate
+            {
+                StatusRecord st = LoadStatus(연도, id);
+                확인(st, 기대단계);
+                if (!st.최종확인일.HasValue || st.최종확인일.Value.Date != 오늘.Date)
+                    throw new StageConflictException("오늘 대기한 건이 아닙니다.", st.단계);
+                st.최종확인일 = null;
+                상태쓰기(st);
+                기록(연도, id, "대기취소", st.단계, st.단계, 출처, "");
+                result = st;
+            });
+            return result;
+        }
+
+        /// <summary>
         /// 한 칸 되돌린다. 오늘 확인 표시도 지워 팝업이 다시 묻게 한다 —
         /// 잘못 완료 처리한 건이 조용히 기한을 넘기는 것을 막기 위해서다.
         /// </summary>

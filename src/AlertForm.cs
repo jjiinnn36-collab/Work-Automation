@@ -632,7 +632,8 @@ namespace PaymentAlert
 
             bool 여러건 = rows.Count > 1;
             점보임값 = 여러건;
-            넘기기줄.Visible = 여러건;
+            넘기기줄.Visible = 여러건 || 완료 || 남음 == 0;
+            점.Visible = 여러건;
             넘기기줄그리기(완료);
 
             Ui.버튼활성(closeButton, 남음 == 0);
@@ -644,12 +645,16 @@ namespace PaymentAlert
             점.Location = new Point(다음버튼.Left - 6 - 점.Width, (줄높이 - 점.Height) / 2);
             미리보기.Width = Math.Max(40, 점.Left - 8 - 미리보기.Left);
 
+            // 다 고른 뒤 카드를 다시 보는 중이면, 마지막 카드에서 › · 줄로 완료 장(닫기)에 간다 (ADR-0019).
+            bool 다골랐음 = 남은건수() == 0;
+            bool 마지막 = index >= rows.Count - 1;
             bool 이전됨 = 완료 || index > 0;
-            bool 다음됨 = !완료 && index < rows.Count - 1;
+            bool 다음됨 = !완료 && (!마지막 || 다골랐음);
             Ui.버튼활성(이전버튼, 이전됨);
             Ui.버튼활성(다음버튼, 다음됨);
             미리보기.Enabled = 다음됨;
             if (완료) 미리보기.설정("", "", rows.Count + "건 모두 골랐습니다");
+            else if (마지막 && 다골랐음) 미리보기.설정("", "모두 골랐습니다", " · 닫으러 가기");
             else if (다음됨)
             {
                 AlertRow n = rows[index + 1];
@@ -725,7 +730,7 @@ namespace PaymentAlert
             대기.Visible = 진행보임;
             // 창을 띄우기 전에는 Visible 이 늘 false 라 조건은 따로 든다.
             bool 처리보임 = handled || done;
-            bool 되돌리기보임 = 처리보임 && row.Status.단계 > 0;
+            bool 되돌리기보임 = 처리보임 && 되돌릴것(row) != null;
             처리표시.Visible = 처리보임;
             되돌리기.Visible = 되돌리기보임;
 
@@ -778,10 +783,34 @@ namespace PaymentAlert
             넘김타이머.Start();
         }
 
-        void 되돌리기누름()
+        /// <summary>
+        /// 이 건에서 되돌릴 것: 오늘 '오늘은 대기' 를 눌렀으면 그 대기를, 아니면 한 단계를 (ADR-0019).
+        /// 처음 단계에서 대기도 안 했으면 되돌릴 것이 없다.
+        /// </summary>
+        string 되돌릴것(AlertRow row)
+        {
+            bool 대기함 = !row.오늘단계변경 && !row.최종단계도달 &&
+                row.Status.최종확인일.HasValue && row.Status.최종확인일.Value.Date == today.Date;
+            if (대기함) return "대기취소";
+            if (row.Status.단계 > 0) return "되돌리기";
+            return null;
+        }
+
+        /// <summary>지금 카드에서 되돌릴 수 있는지와 그 이름 (시험용): "대기취소" · "되돌리기" · null.</summary>
+        public string 되돌릴수있는것 { get { return rows.Count == 0 ? null : 되돌릴것(현재행()); } }
+
+        /// <summary>되돌리기 버튼·메뉴. 대기 취소는 바로, 단계 되돌리기는 한 번 묻고.</summary>
+        public void 되돌리기누름()
         {
             AlertRow row = 현재행();
-            if (row.Status.단계 <= 0) return;
+            string 할일 = 되돌릴것(row);
+            if (할일 == null) return;
+            if (할일 == "대기취소")
+            {
+                if (!적용(row, "대기취소")) return;
+                RefreshState();
+                return;
+            }
             string[] names = row.단계목록;
             string 확인 = string.Format("{0} ({1})\r\n\r\n'{2}' 를 취소하고 '{3}' 까지 끝난 것으로 되돌릴까요?",
                 row.Occ.Item.비용명, row.Occ.Item.기관, names[row.Status.단계], names[row.Status.단계 - 1]);
@@ -799,6 +828,7 @@ namespace PaymentAlert
             {
                 if (동작 == "진행") { row.Status.단계++; row.Status.변경일시 = DateTime.Now; row.Status.최종확인일 = today; }
                 else if (동작 == "대기") row.Status.최종확인일 = today;
+                else if (동작 == "대기취소") row.Status.최종확인일 = null;
                 else { row.Status.단계--; row.Status.변경일시 = DateTime.Now; row.Status.최종확인일 = null; }
                 return true;
             }
@@ -840,8 +870,13 @@ namespace PaymentAlert
             var 열기 = new ToolStripMenuItem(n > 0 ? string.Format("증빙 폴더 열기 ({0}건)", n) : "증빙 폴더 열기");
             열기.Click += delegate { OpenFolder(row); };
             메뉴.Items.Add(열기);
-            var 되돌 = new ToolStripMenuItem("한 단계 되돌리기");
-            되돌.Enabled = row.Status.단계 > 0;
+            string 할일 = 되돌릴것(row);
+            string[] 지점 = row.단계목록;
+            string 되돌이름 = 할일 == "대기취소" ? "'오늘은 대기' 취소"
+                : 할일 == "되돌리기" ? string.Format("한 단계 되돌리기 ({0} → {1})", 지점[Math.Min(row.Status.단계, 지점.Length - 1)], 지점[Math.Max(0, Math.Min(row.Status.단계, 지점.Length - 1) - 1)])
+                : "한 단계 되돌리기";
+            var 되돌 = new ToolStripMenuItem(되돌이름);
+            되돌.Enabled = 할일 != null;
             되돌.Click += delegate { 되돌리기누름(); };
             메뉴.Items.Add(되돌);
             if (!string.IsNullOrEmpty(row.Occ.Item.홈페이지주소))
@@ -1024,6 +1059,11 @@ namespace PaymentAlert
                 return;
             }
             int t = index + 방향;
+            if (t >= rows.Count && 남은건수() == 0)
+            {
+                전환(delegate { 완료보기 = true; RefreshState(); }, 1);
+                return;
+            }
             if (t < 0 || t >= rows.Count) return;   // 처음·끝에서는 멈춘다
             이동(t);
         }
@@ -1117,8 +1157,7 @@ namespace PaymentAlert
             }
             string tail = overdue.Count > shown ? string.Format("\r\n외 {0}건", overdue.Count - shown) : "";
             return string.Format(
-                "기한이 지나고 5영업일이 넘은 미처리 건이 {0}건 있습니다.\r\n\r\n{1}{2}\r\n\r\n" +
-                "매일 묻지는 않지만 끝내야 조용해집니다. 웹 화면 '받은 알림' 에서 처리할 수 있습니다.",
+                "기한이 지나고 5영업일이 넘은 미처리 건이 {0}건 있습니다.\r\n\r\n{1}{2}",
                 overdue.Count, string.Join("\r\n", names.ToArray()), tail);
         }
     }

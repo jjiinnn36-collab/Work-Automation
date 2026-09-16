@@ -87,6 +87,7 @@ namespace PaymentAlert.Tests
                 순서옮기기();
                 자료준비();
                 사용자설정흐름();
+                대기취소();
             }
             catch (Exception ex)
             {
@@ -724,6 +725,43 @@ namespace PaymentAlert.Tests
                 CheckTrue("단계 검사: 같은 이름 거절", Stages.단계검사(new string[] { "a", "a" }, null) != null);
                 CheckTrue("단계 검사: | 거절", Stages.단계검사(new string[] { "a", "b|c" }, null) != null);
                 CheckTrue("단계 검사: 정상", Stages.단계검사(new string[] { "a", "b" }, new string[] { "", "하기" }) == null);
+            }
+            finally { 치우기(dir); }
+        }
+
+        static void 대기취소()
+        {
+            Console.WriteLine("\n[DB-21] '오늘은 대기' 취소 (ADR-0019)");
+            string dir = 임시폴더("undefer");
+            try
+            {
+                using (Store s = Store.Open(Path.Combine(dir, "u.db")))
+                {
+                    DateTime 오늘 = new DateTime(2026, 9, 17);
+                    bool 거절 = false;
+                    try { s.대기취소(2026, "x", 0, DateTime.Now, 오늘, "시험"); }
+                    catch (StageConflictException) { 거절 = true; }
+                    CheckTrue("대기하지 않은 건은 취소 거절", 거절);
+
+                    s.Defer(2026, "x", 0, DateTime.Now, 오늘, "시험");
+                    거절 = false;
+                    try { s.대기취소(2026, "x", 0, DateTime.Now, 오늘.AddDays(1), "시험"); }
+                    catch (StageConflictException) { 거절 = true; }
+                    CheckTrue("어제 대기한 것은 오늘 취소 대상 아님", 거절);
+
+                    StatusRecord st = s.대기취소(2026, "x", 0, DateTime.Now, 오늘, "시험");
+                    CheckTrue("오늘 확인 표시가 지워짐", !st.최종확인일.HasValue);
+                    Check("단계는 그대로", st.단계, 0);
+                    CheckTrue("DB 에도 반영", !s.LoadStatus(2026, "x").최종확인일.HasValue);
+                    List<StatusEvent> ev = s.LoadEvents(2026, "x");
+                    Check("기록: 대기 → 대기취소", ev[0].동작 + "/" + ev[1].동작, "대기취소/대기");
+
+                    s.Defer(2026, "x", 0, DateTime.Now, 오늘, "시험");
+                    거절 = false;
+                    try { s.대기취소(2026, "x", 1, DateTime.Now, 오늘, "시험"); }
+                    catch (StageConflictException) { 거절 = true; }
+                    CheckTrue("화면이 본 단계와 다르면 거절", 거절);
+                }
             }
             finally { 치우기(dir); }
         }

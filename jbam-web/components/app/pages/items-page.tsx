@@ -8,7 +8,7 @@ import type { Item, ItemsData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useApp } from "@/components/app/app-context"
 import { LoadError, PageHeader } from "@/components/app/parts"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -68,9 +68,17 @@ export function ItemsPage() {
       />
       <Alert>
         <InfoIcon />
+        <AlertTitle>항목 관리에서 하는 일</AlertTitle>
         <AlertDescription>
-          기관·비용명·기한·진행흐름은 여기서 정합니다. 그 해 실제 금액은 이번 달·연간 화면의 금액을 눌러 넣고, 아래 <b>{year}년 금액</b> 칸에 함께 보입니다.
-          분할납부는 항목 추가에서 월을 <code>5,6,7</code> 처럼 쉼표로 넣습니다.
+          <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
+            <li>기관 · 비용명 · 기한 · 진행흐름을 정합니다.</li>
+            <li>
+              그 해 실제 금액은 <b>이번 달</b>·<b>연간</b> 화면에서 금액을 눌러 넣고, 아래 <b>{year}년 금액</b> 칸에서 확인합니다.
+            </li>
+            <li>
+              분할납부는 항목 추가의 기한 월에 <code className="rounded bg-muted px-1">5,6,7</code> 처럼 쉼표로 넣습니다.
+            </li>
+          </ul>
         </AlertDescription>
       </Alert>
 

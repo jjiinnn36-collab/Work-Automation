@@ -317,6 +317,8 @@ namespace PaymentAlert.Tests
             Check("다 고르면 닫기 켜짐", close.Enabled, true);
 
             Console.WriteLine("\n[GUI-10] 바닥 넘기기 줄: ‹ 다음 미리보기 › (ADR-0017)");
+            rows[2].Status.최종확인일 = null;   // 아직 남은 건이 있는 상태에서 본다
+            form.RefreshState();
             form.이동(2);
             Check("마지막 카드로", form.현재번호, 2);
             Check("마지막 건 안내", form.미리보기문구, "마지막 건입니다");
@@ -331,9 +333,26 @@ namespace PaymentAlert.Tests
             Check("처음에서 ‹ 는 그대로", form.현재번호, 0);
             form.넘기기(1);
             Check("› 로 한 칸", form.현재번호, 1);
-            CheckTrue("다음 건이 대기한 건이면 '내일 다시'", form.미리보기문구.EndsWith("내일 다시"));
+            CheckTrue("다음 건이 아직이면 D-n", form.미리보기문구.StartsWith("다음 ") && form.미리보기문구.Contains("D-"));
             form.이동(2);
             CheckTrue("점은 위치 표시만 (누르지 않음)", !dots.누를수있음);
+
+            Console.WriteLine("\n[GUI-13] 되돌리기: 대기 취소 (ADR-0019)");
+            form.이동(0);
+            Check("대기한 첫 단계 건은 '대기취소' 를 되돌림", form.되돌릴수있는것, "대기취소");
+            form.되돌리기누름();
+            CheckTrue("대기 취소 뒤 다시 고를 수 있음", form.진행버튼문구 != null && !rows[0].오늘처리됨(today));
+            Check("첫 단계·대기 안 함이면 되돌릴 것 없음", form.되돌릴수있는것, null);
+            rows[0].Status.최종확인일 = today;
+            form.RefreshState();
+            form.이동(1);
+            Check("진행한 건은 한 단계 되돌리기", form.되돌릴수있는것, "되돌리기");
+            rows[2].Status.최종확인일 = today;   // 다시 모두 고른 상태로
+            form.이동(2);
+            Check("마지막 카드로", form.현재번호, 2);
+            form.이동(1);
+            CheckTrue("다음 건이 대기한 건이면 '내일 다시'", form.미리보기문구.EndsWith("내일 다시"));
+            form.이동(2);
 
             Console.WriteLine("\n[GUI-9] 다 고르면 잠깐 뒤 완료 장");
             CheckTrue("고른 직후에는 아직 카드", !form.완료보임);
@@ -356,6 +375,17 @@ namespace PaymentAlert.Tests
             form.RefreshState();
             form.넘김실행();
             CheckTrue("남은 건이 생기면 완료 장 대신 그 건으로", !form.완료보임 && form.현재번호 == 1);
+
+            Console.WriteLine("\n[GUI-13] 다 고른 뒤 카드를 다시 봐도 닫기로 갈 수 있음 (ADR-0019)");
+            rows[1].Status.최종확인일 = today;
+            form.RefreshState();
+            form.이동(0);
+            CheckTrue("앞 카드에서는 › 가 다음 카드로", form.다음가능 && form.미리보기문구.StartsWith("다음 "));
+            form.이동(2);
+            CheckTrue("마지막 카드에서도 › 켜짐", form.다음가능);
+            Check("마지막 카드 줄은 닫으러 가기", form.미리보기문구, "모두 골랐습니다 · 닫으러 가기");
+            form.넘기기(1);
+            CheckTrue("› 로 완료 장 (닫기 버튼)", form.완료보임);
             form.Dispose();
 
             Console.WriteLine("\n[GUI-2] 한 건이면 점을 숨기고, 13건 이상이면 글자로");

@@ -45,7 +45,7 @@ export function YearPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title={`${y}년`}
-        description={`전체 ${data.count}건${data.beforeStart > 0 ? ` · 추적 시작일 ${data.startDate} 이전 ${data.beforeStart}건은 지난 건에 흐리게` : ""}`}
+        description={`전체 ${data.count}건`}
         actions={
           <>
             <ButtonGroup>
