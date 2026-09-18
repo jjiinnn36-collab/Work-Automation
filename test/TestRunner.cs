@@ -6,7 +6,7 @@ using PaymentAlert;
 
 namespace PaymentAlert.Tests
 {
-    static class TestRunner
+    static partial class TestRunner
     {
         static int passed = 0;
         static int failed = 0;
@@ -78,16 +78,21 @@ namespace PaymentAlert.Tests
             Check("납부만 첫 단계",   Stages.For(Flow.납부만)[0], "고지서수령");
 
             Console.WriteLine("\n[5b] 지점은 달성한 것, 밑줄은 행동 (AC-W49~W51, W70~W76)");
-            Check("신고납부 지점", string.Join("/", Stages.For(Flow.신고납부)), "신고서 작성/신고/전표발행/납부");
+            Check("신고납부 지점", string.Join("/", Stages.For(Flow.신고납부)), "신고 전/신고/전표발행/납부");
             Check("납부만 지점", string.Join("/", Stages.For(Flow.납부만)), "고지서수령/전표발행/납부");
             Check("제출만 지점", string.Join("/", Stages.For(Flow.제출만)), "제출자료 작성/제출");
             Check("신고납부 시작 → 신고완료", Stages.다음행동(Flow.신고납부, 0), "신고완료");
-            Check("신고 끝남 → 전표 발행", Stages.다음행동(Flow.신고납부, 1), "전표 발행");
+            Check("신고 끝남 → 전표발행", Stages.다음행동(Flow.신고납부, 1), "전표발행");
             Check("전표발행 끝남 → 납부완료", Stages.다음행동(Flow.신고납부, 2), "납부완료");
             Check("납부만 전표 뒤 → 납부완료", Stages.다음행동(Flow.납부만, 1), "납부완료");
-            Check("납부만 시작 → 전표 발행", Stages.다음행동(Flow.납부만, 0), "전표 발행");
-            Check("제출만 시작 → 제출하기", Stages.다음행동(Flow.제출만, 0), "제출하기");
+            Check("납부만 시작 → 전표발행", Stages.다음행동(Flow.납부만, 0), "전표발행");
+            Check("제출만 시작 → 제출", Stages.다음행동(Flow.제출만, 0), "제출");
             CheckTrue("마지막까지 끝나면 행동 없음", Stages.다음행동(Flow.납부만, 2) == null);
+            var 신고건 = new PaymentItem(); 신고건.진행흐름 = Flow.신고납부;
+            var 납부건 = new PaymentItem(); 납부건.진행흐름 = Flow.납부만;
+            CheckTrue("신고 후 납부는 시작점을 숨김", Stages.시작숨김(신고건) && !Stages.시작숨김(납부건));
+            Check("신고 후 납부 보이는 지점", string.Join("/", Stages.보이는지점(신고건)), "신고/전표발행/납부");
+            Check("납부만 보이는 지점은 그대로", string.Join("/", Stages.보이는지점(납부건)), "고지서수령/전표발행/납부");
 
             // 사용자설정 흐름 (ADR-0015)
             var cu = new PaymentItem();
@@ -102,7 +107,7 @@ namespace PaymentAlert.Tests
             var 보통 = new PaymentItem();
             보통.진행흐름 = Flow.납부만;
             Check("보통 흐름은 정의 안 씀", Stages.단계정의(보통), "");
-            Check("보통 흐름 행동은 기존 규칙", Stages.다음행동(보통, 0), "전표 발행");
+            Check("보통 흐름 행동은 기존 규칙", Stages.다음행동(보통, 0), "전표발행");
             Check("옛 이름 전표결재 → 전표발행", Stages.옛이름["전표결재"], "전표발행");
             Check("옛 이름 납부 전 → 고지서수령", Stages.옛이름["납부 전"], "고지서수령");
 
@@ -517,6 +522,20 @@ namespace PaymentAlert.Tests
             foreach (Occurrence o in occs2)
                 if (o.연도 == 2026 && !o.공휴일자료없음) flagged = false;
             CheckTrue("2026 자료 없음 표시됨", flagged);
+
+            Console.WriteLine("\n[12b] 유효연도 밖에는 기한이 없다 (ADR-0023)");
+            var ranged = new PaymentItem();
+            ranged.Id = "loan-x-202612"; ranged.기관 = "차입처A"; ranged.비용명 = "차입금 이자 1회차";
+            ranged.진행흐름 = Flow.납부만; ranged.월 = 12; ranged.일 = 4; ranged.알림영업일 = 5;
+            ranged.시작연도 = 2026; ranged.종료연도 = 2026;
+            var occR = Scheduler.BuildOccurrences(new List<PaymentItem> { ranged }, cal, new DateTime(2026, 6, 15));
+            Check("작년·올해·내년 중 2026 한 건만", occR.Count, 1);
+            Check("그 건은 2026", occR.Count == 1 ? occR[0].연도 : 0, 2026);
+            ranged.시작연도 = 2027; ranged.종료연도 = null;
+            Check("시작 2027부터: 2027 한 건", Scheduler.BuildOccurrences(new List<PaymentItem> { ranged }, cal, new DateTime(2026, 6, 15)).Count, 1);
+            CheckTrue("해당연도 판정", ranged.해당연도(2030) && !ranged.해당연도(2026));
+
+            차입스케줄시험();
 
             Console.WriteLine("\n" + new string('=', 60));
             Console.WriteLine(string.Format("  통과 {0}건 / 실패 {1}건", passed, failed));

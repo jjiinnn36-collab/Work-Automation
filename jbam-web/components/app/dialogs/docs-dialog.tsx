@@ -13,20 +13,20 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Spinner } from "@/components/ui/spinner"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 
 type Kind = "받은문서" | "증빙"
 
 /**
- * 받은 문서·붙여 둔 증빙 목록 (AC-W101~W107). 이번 달·연간·이력이 같은 창을 쓴다.
+ * 증빙자료 목록 (AC-W101~W107). 이번 달·연간·이력이 같은 창을 쓴다.
+ * 받은 문서(고지서·통보문)와 증빙(신고서·영수증)은 둘 다 직접 첨부하는 파일이라 한 목록으로 보인다 (사용자 요청 2026-09-18).
+ * 새로 첨부하는 파일은 '증빙' 으로 저장한다. 예전에 받은 문서로 붙인 파일도 같은 목록에 나온다.
  * PDF·이미지는 창 안에서 보고, 그 밖의 형식은 이 PC 의 기본 프로그램으로 연다.
  */
 export function DocsDialog({
   target, open, onOpenChange,
 }: { target: { o: Occurrence; kind: Kind } | null; open: boolean; onOpenChange: (v: boolean) => void }) {
   const app = useApp()
-  const [kind, setKind] = React.useState<Kind>("받은문서")
   const [files, setFiles] = React.useState<AttachmentFile[] | null>(null)
   const [selected, setSelected] = React.useState<AttachmentFile | null>(null)
   const [busy, setBusy] = React.useState(false)
@@ -49,21 +49,20 @@ export function DocsDialog({
 
   React.useEffect(() => {
     if (!open || !target) return
-    setKind(target.kind)
     setSelected(null)
     setFiles(null)
     autoOpened.current = false
     load().then((list) => {
-      // 받은 문서가 하나뿐이면 고를 것이 없으니 바로 보여 준다 (AC-W107).
+      // 파일이 하나뿐이면 고를 것이 없으니 바로 보여 준다 (AC-W107).
       if (!list || autoOpened.current) return
-      const docs = list.filter((f) => f.kind === target.kind)
+      const docs = list
       if (docs.length === 1 && previewKind(docs[0].name) !== "none") setSelected(docs[0])
       autoOpened.current = true
     })
   }, [open, target, load])
 
   if (!o) return null
-  const list = (files ?? []).filter((f) => f.kind === kind)
+  const list = files ?? []
 
   async function add(picked: File[]) {
     if (!o || picked.length === 0) return
@@ -71,7 +70,7 @@ export function DocsDialog({
     let ok = 0
     for (const f of picked) {
       try {
-        await upload("/api/attach", { y: o.year, id: o.id, kind }, f)
+        await upload("/api/attach", { y: o.year, id: o.id, kind: "증빙" }, f)
         ok++
       } catch (e) {
         toast.add({ title: `${f.name} 을(를) 첨부하지 못했습니다`, description: errorMessage(e), type: "error" })
@@ -114,24 +113,15 @@ export function DocsDialog({
     }
   }
 
-  const kindWord = kind === "받은문서" ? "받은 문서" : "증빙"
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>{kind === "받은문서" ? "받은 문서" : "붙여 둔 증빙"}</DialogTitle>
+          <DialogTitle>증빙자료</DialogTitle>
           <DialogDescription>
             {o.name} · {o.org} · {o.year}년
           </DialogDescription>
         </DialogHeader>
-
-        <Tabs value={kind} onValueChange={(v) => { setKind(v as Kind); setSelected(null) }}>
-          <TabsList>
-            <TabsTrigger value="받은문서">받은 문서</TabsTrigger>
-            <TabsTrigger value="증빙">붙여 둔 증빙</TabsTrigger>
-          </TabsList>
-        </Tabs>
 
         <div className="grid min-h-0 gap-4 md:grid-cols-[minmax(0,18rem)_1fr]">
           <div className="flex min-w-0 flex-col gap-3">
@@ -146,7 +136,7 @@ export function DocsDialog({
             >
               <span>파일을 끌어 놓거나</span>
               <Button variant="outline" size="sm" disabled={busy} onClick={() => inputRef.current?.click()}>
-                {busy ? <Spinner /> : <UploadIcon data-icon="inline-start" />} {kindWord} 첨부
+                {busy ? <Spinner /> : <UploadIcon data-icon="inline-start" />} 파일 첨부
               </Button>
               <input
                 ref={inputRef}
@@ -166,9 +156,9 @@ export function DocsDialog({
               <Empty className="border">
                 <EmptyHeader>
                   <EmptyMedia variant="icon"><FileTextIcon /></EmptyMedia>
-                  <EmptyTitle>{kindWord}가 없습니다</EmptyTitle>
+                  <EmptyTitle>증빙자료가 없습니다</EmptyTitle>
                   <EmptyDescription>
-                    {kind === "받은문서" ? "받은 고지서·통보문을 첨부해 두면 여기서 바로 열립니다." : "신고서·영수증을 붙여 두세요. 첨부할 때의 지점이 함께 기록됩니다."}
+                    고지서·신고서·영수증 등을 첨부해 두면 여기서 바로 열립니다.
                   </EmptyDescription>
                 </EmptyHeader>
               </Empty>

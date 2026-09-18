@@ -18,6 +18,7 @@ echo.
   /reference:System.Drawing.dll ^
   /reference:System.Windows.Forms.dll ^
   /reference:System.Xml.dll ^
+  /reference:System.IO.Compression.dll ^
   /optimize+ ^
   "src\*.cs"
 

@@ -87,7 +87,87 @@ namespace PaymentAlert
                 }
             }
             catch { }
-            return Path.Combine(dataDir, "backups");
+            return 기본폴더(dataDir);
+        }
+
+        /// <summary>기본 위치 = 자료 폴더 안 backups.</summary>
+        public static string 기본폴더(string dataDir) { return Path.Combine(dataDir, "backups"); }
+
+        /// <summary>backup-folder.txt 로 위치를 따로 정해 두었는가.</summary>
+        public static bool 따로정함(string baseDir)
+        {
+            return File.Exists(Path.Combine(baseDir, 설정파일));
+        }
+
+        static readonly string[] 동기화폴더 = { "OneDrive", "Dropbox", "Google Drive", "GoogleDrive", "iCloudDrive", "iCloud Drive", "내 드라이브", "My Drive", "MYBOX", "네이버 MYBOX" };
+
+        /// <summary>
+        /// 화면에서 고른 백업 위치를 검사한다. 잘못이면 이유, 괜찮으면 null.
+        /// 사본에는 실제 자료가 그대로 들어 있어 이 PC 밖으로 나가는 곳(네트워크·클라우드 동기화 폴더)은 막는다.
+        /// 웹 화면 폴더 안은 브라우저로 내려받을 수 있어 막는다.
+        /// </summary>
+        public static string 폴더검사(string folder, string webRoot)
+        {
+            string p = (folder ?? "").Trim().Trim('"');
+            if (p.Length == 0) return null;
+            if (p.StartsWith(@"\\") || p.StartsWith("//")) return "네트워크 폴더는 쓸 수 없습니다. 이 PC 의 폴더를 넣으세요.";
+            if (p.Length < 3 || !char.IsLetter(p[0]) || p[1] != ':' || (p[2] != '\\' && p[2] != '/'))
+                return @"C:\백업 처럼 드라이브부터 쓴 전체 경로를 넣으세요.";
+            string full;
+            try { full = Path.GetFullPath(p); }
+            catch { return "폴더 경로가 올바르지 않습니다."; }
+            try
+            {
+                var drive = new DriveInfo(full.Substring(0, 1));
+                if (drive.DriveType == DriveType.Network) return "네트워크 드라이브는 쓸 수 없습니다. 이 PC 의 폴더를 넣으세요.";
+                if (drive.DriveType == DriveType.NoRootDirectory || !drive.IsReady) return "그 드라이브를 찾을 수 없습니다.";
+                string label = "";
+                try { label = drive.VolumeLabel ?? ""; } catch { }
+                foreach (string name in 동기화폴더)
+                    if (label.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return "클라우드 동기화 드라이브(" + label + ")는 쓸 수 없습니다. 사본이 PC 밖으로 올라갑니다.";
+            }
+            catch (ArgumentException) { return "그 드라이브를 찾을 수 없습니다."; }
+            foreach (string seg in full.Split('\\', '/'))
+                foreach (string name in 동기화폴더)
+                    if (seg.StartsWith(name, StringComparison.OrdinalIgnoreCase))
+                        return "클라우드 동기화 폴더(" + seg + ")는 쓸 수 없습니다. 사본이 PC 밖으로 올라갑니다.";
+            foreach (string env in new[] { "OneDrive", "OneDriveCommercial", "OneDriveConsumer" })
+            {
+                string od = Environment.GetEnvironmentVariable(env);
+                if (!string.IsNullOrEmpty(od) && 안에있음(full, od))
+                    return "OneDrive 폴더는 쓸 수 없습니다. 사본이 PC 밖으로 올라갑니다.";
+            }
+            if (!string.IsNullOrEmpty(webRoot) && 안에있음(full, webRoot))
+                return "웹 화면 폴더 안에는 둘 수 없습니다.";
+            try
+            {
+                Directory.CreateDirectory(full);
+                string probe = Path.Combine(full, ".쓰기확인-" + Guid.NewGuid().ToString("N") + ".tmp");
+                File.WriteAllText(probe, "");
+                File.Delete(probe);
+            }
+            catch (Exception ex) { return "그 폴더에 쓸 수 없습니다: " + ex.Message; }
+            return null;
+        }
+
+        static bool 안에있음(string path, string root)
+        {
+            string a = Path.GetFullPath(path).TrimEnd('\\') + "\\";
+            string b = Path.GetFullPath(root).TrimEnd('\\') + "\\";
+            return a.StartsWith(b, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>위치를 backup-folder.txt 에 적는다. 빈 값이면 파일을 지워 기본 위치로 돌린다. 이미 만든 사본은 옮기지 않는다.</summary>
+        public static void 폴더저장(string baseDir, string folder)
+        {
+            string cfg = Path.Combine(baseDir, 설정파일);
+            string p = (folder ?? "").Trim().Trim('"');
+            if (p.Length == 0) { if (File.Exists(cfg)) File.Delete(cfg); return; }
+            string tmp = cfg + ".tmp";
+            File.WriteAllText(tmp, "# 백업 폴더 (설정 화면에서 바꿈)\r\n" + Path.GetFullPath(p) + "\r\n", new UTF8Encoding(false));
+            if (File.Exists(cfg)) File.Delete(cfg);
+            File.Move(tmp, cfg);
         }
 
         /// <summary>오늘 사본이 없으면 만든다. 만들었으면 경로, 이미 있었으면 null.</summary>

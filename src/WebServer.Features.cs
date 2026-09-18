@@ -97,20 +97,27 @@ namespace PaymentAlert
             return rec;
         }
 
-        List<PaymentItem> 묶음항목(Env env, string group)
+        /// <summary>한 묶음에서 그 해에 기한이 있는 회차. 여러 해에 걸친 차입 이자 묶음도 있다 (ADR-0023).</summary>
+        List<PaymentItem> 묶음항목(Env env, string group, int year)
         {
             string g = (group ?? "").Trim();
             if (g.Length == 0) throw new HttpError(400, "묶음 이름이 없습니다.");
-            var list = env.Master.FindAll(delegate(PaymentItem x) { return x.묶음 == g; });
-            if (list.Count == 0) throw new HttpError(404, "그런 분할납부 묶음이 없습니다: " + g);
-            list.Sort(delegate(PaymentItem a, PaymentItem b) { return a.월.CompareTo(b.월); });
+            var all = env.Master.FindAll(delegate(PaymentItem x) { return x.묶음 == g; });
+            if (all.Count == 0) throw new HttpError(404, "그런 분할납부 묶음이 없습니다: " + g);
+            var list = all.FindAll(delegate(PaymentItem x) { return x.해당연도(year); });
+            if (list.Count == 0) throw new HttpError(404, "이 묶음은 " + year + "년에 회차가 없습니다: " + g);
+            list.Sort(delegate(PaymentItem a, PaymentItem b)
+            {
+                int c = a.월.CompareTo(b.월);
+                return c != 0 ? c : string.CompareOrdinal(a.Id, b.Id);
+            });
             return list;
         }
 
         /// <summary>한 묶음의 모든 회차를 한 표로 (AC-W33). 합계는 늘 같이 (AC-W35).</summary>
         JObj Group(Env env, int y, string group)
         {
-            List<PaymentItem> items = 묶음항목(env, group);
+            List<PaymentItem> items = 묶음항목(env, group, y);
             var rows = new List<object>();
             decimal total = 0;
             int entered = 0;
@@ -124,7 +131,7 @@ namespace PaymentAlert
             }
             return new JObj()
                 .Set("year", y).Set("group", items[0].묶음)
-                .Set("org", items[0].기관).Set("name", items[0].비용명)
+                .Set("org", items[0].기관).Set("name", items[0].카드이름)
                 .Set("rows", rows).Set("total", total).Set("entered", entered).Set("count", items.Count);
         }
 
@@ -132,7 +139,7 @@ namespace PaymentAlert
         JObj SaveGroupAmounts(Env env, NameValueCollection f)
         {
             int y = 연도(f["y"]);
-            List<PaymentItem> items = 묶음항목(env, f["group"]);
+            List<PaymentItem> items = 묶음항목(env, f["group"], y);
             string source = 글자(f["source"], "출처", 60, false);
             var records = new List<AmountRecord>();
             foreach (PaymentItem it in items)
@@ -172,6 +179,13 @@ namespace PaymentAlert
         JObj MoveItem(Env env, NameValueCollection f)
         {
             PaymentItem it = 항목(env, f["id"]);
+            // to = 목록 위치(0부터) — 끌어서 옮기기. 없으면 dir = up/down 한 칸.
+            if (!string.IsNullOrEmpty(f["to"]))
+            {
+                int to;
+                if (!int.TryParse(f["to"], NumberStyles.None, Inv, out to)) throw new HttpError(400, "to 는 0 이상의 숫자여야 합니다.");
+                return new JObj().Set("ok", true).Set("moved", env.Db.MoveItemTo(it.Id, to));
+            }
             string dir = f["dir"];
             if (dir != "up" && dir != "down") throw new HttpError(400, "dir 은 up 또는 down 이어야 합니다.");
             bool moved = env.Db.MoveItem(it.Id, dir == "up" ? -1 : 1);
@@ -197,13 +211,13 @@ namespace PaymentAlert
                     if (!s.HasValue || stages == null || s.Value < 0 || s.Value >= stages.Length) return null;
                     return stages[s.Value];
                 };
-                rows.Add(new JObj()
+                rows.Add(env.기관사이트붙이기(new JObj()
                     .Set("at", e.시각.ToString("yyyy-MM-dd HH:mm:ss", Inv))
                     .Set("year", e.연도).Set("id", e.Id)
-                    .Set("name", it != null ? it.비용명 : (e.Id == "-" ? "설정" : e.Id))
+                    .Set("name", it != null ? it.카드이름 : (e.Id == "-" ? "설정" : e.Id))
                     .Set("org", it != null ? it.기관 : "")
                     .Set("action", e.동작).Set("source", e.출처).Set("detail", e.내용)
-                    .Set("from", 이름(e.이전단계)).Set("to", 이름(e.이후단계)));
+                    .Set("from", 이름(e.이전단계)).Set("to", 이름(e.이후단계)), it));
             }
             return new JObj().Set("rows", rows);
         }

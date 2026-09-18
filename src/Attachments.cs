@@ -197,13 +197,18 @@ namespace PaymentAlert
             var all = new List<Attachment>();
             foreach (var list in byKey.Values) all.AddRange(list);
 
+            // List.Sort 는 순서를 지키지 않는다. 같은 초에 붙인 파일이 뒤바뀌지 않게 붙인 순서를 마지막 기준으로 둔다.
+            var 붙인순서 = new Dictionary<Attachment, int>();
+            for (int i = 0; i < all.Count; i++) 붙인순서[all[i]] = i;
             all.Sort(delegate(Attachment x, Attachment y)
             {
                 int c = x.연도.CompareTo(y.연도);
                 if (c != 0) return c;
                 c = string.Compare(x.Id, y.Id, StringComparison.Ordinal);
                 if (c != 0) return c;
-                return x.첨부일시.CompareTo(y.첨부일시);
+                c = x.첨부일시.CompareTo(y.첨부일시);
+                if (c != 0) return c;
+                return 붙인순서[x].CompareTo(붙인순서[y]);
             });
 
             var rows = new List<string[]>();

@@ -41,6 +41,7 @@ namespace PaymentAlert
         // 본문 — 한 장에 한 건 (시안 v5 A안, ADR-0016)
         readonly Panel 본문;
         readonly Label 이름;
+        readonly Label 차입처;          // 차입 이자 회차의 거래처 — 제목 옆에 작게 (ADR-0023)
         readonly Label 상태;            // '5영업일 지남' — 빨강은 여기에만
         readonly Label 부가;            // ' · 5/20 (수) · 1,234,560원'
         readonly StepBar 단계막대;
@@ -177,6 +178,13 @@ namespace PaymentAlert
             이름.Location = new Point(16, 4);
             이름.Size = new Size(폭 - 32, 30);
             본문.Controls.Add(이름);
+
+            차입처 = 라벨("", 12, false, Ui.흐린글씨);
+            차입처.AutoSize = false;
+            차입처.AutoEllipsis = true;
+            차입처.Visible = false;
+            본문.Controls.Add(차입처);
+            차입처.BringToFront();
 
             상태 = 라벨("", 13, true, Ui.잉크);
             상태.Location = new Point(16, 40);
@@ -658,7 +666,7 @@ namespace PaymentAlert
             else if (다음됨)
             {
                 AlertRow n = rows[index + 1];
-                미리보기.설정("다음", n.Occ.Item.비용명, " · " + 짧은상태(n));
+                미리보기.설정("다음", n.Occ.Item.카드이름, " · " + 짧은상태(n));
             }
             else 미리보기.설정("", "", "마지막 건입니다");
         }
@@ -666,7 +674,7 @@ namespace PaymentAlert
         /// <summary>미리보기 줄에 쓰는 짧은 상태: D-2 · 오늘 기한 · 5일 지남 · 내일 다시 · 처리함 · 모두 끝남.</summary>
         string 짧은상태(AlertRow r)
         {
-            if (r.최종단계도달) return "모두 끝남";
+            if (r.최종단계도달) return "모두 완료";
             if (r.오늘처리됨(today)) return r.오늘단계변경 ? "처리함" : "내일 다시";
             int 남은 = r.Occ.남은영업일(cal, today);
             if (남은 > 0) return "D-" + 남은;
@@ -698,12 +706,22 @@ namespace PaymentAlert
             bool done = row.최종단계도달;
             bool handled = row.오늘처리됨(today);
 
-            이름.Text = it.비용명;
+            이름.Text = it.카드이름;
+            // 차입 이자 회차: 회차 번호는 빼고, 차입처를 제목 옆에 작게 (사용자 요청 2026-09-18).
+            차입처.Visible = it.차입;
+            if (it.차입)
+            {
+                차입처.Text = it.기관;
+                차입처.Height = 차입처.PreferredHeight;
+                차입처.Left = 이름.Left + 이름.PreferredWidth + 2;
+                차입처.Top = 이름.Top + (이름.Height - 차입처.Height) / 2 + 2;
+                차입처.Width = Math.Max(0, 폭 - 16 - 차입처.Left);
+            }
 
             // 상태 글: 빨강은 기한이 지났고 아직 안 고른 건에만. 나머지는 검정·흐림.
             string st;
             Color c;
-            if (done) { st = "모두 끝남"; c = Ui.흐린글씨; }
+            if (done) { st = "모두 완료"; c = Ui.흐린글씨; }
             else if (남은 > 0) { st = "D-" + 남은; c = Ui.잉크; }
             else if (남은 == 0) { st = "오늘 기한"; c = Ui.잉크; }
             else { st = (-남은) + "영업일 지남"; c = Ui.위험; }
@@ -719,9 +737,10 @@ namespace PaymentAlert
             부가.Text = "· " + string.Join(" · ", parts.ToArray());
             부가.Left = 상태.Left + 상태.PreferredWidth;
             부가.Width = 폭 - 16 - 부가.Left;
-            풍선.SetToolTip(부가, it.기관 + " · " + it.비용명);
+            풍선.SetToolTip(부가, it.기관 + " · " + it.카드이름);
 
-            단계막대.설정(Stages.For(it), row.Status.단계 + 1, done);
+            // 신고 후 납부는 시작점을 그리지 않는다 — 막대의 칸 번호를 하나 당긴다.
+            단계막대.설정(Stages.보이는지점(it), row.Status.단계 + 1 - (Stages.시작숨김(it) ? 1 : 0), done);
             풍선.SetToolTip(단계막대, 단계막대.설명);
 
             // ── 버튼: 아직 안 골랐으면 [행동] 오늘은 대기 ··· ⋯, 골랐으면 (처리 표시) 되돌리기 ··· ⋯ ──
@@ -744,7 +763,7 @@ namespace PaymentAlert
             if (처리보임)
             {
                 bool 대기함 = !row.오늘단계변경 && !done;
-                처리표시.Text = "✓ " + (done ? "모두 끝남" : (대기함 ? "내일 다시 알림" : "처리함"));
+                처리표시.Text = "✓ " + (done ? "모두 완료" : (대기함 ? "내일 다시 알림" : "처리함"));
             }
             if (되돌리기보임)
             {
@@ -764,7 +783,7 @@ namespace PaymentAlert
             var parts = new List<string>();
             if (진행수 > 0) parts.Add("진행 " + 진행수 + "건");
             if (대기수 > 0) parts.Add("오늘은 대기 " + 대기수 + "건");
-            완료설명.Text = parts.Count > 0 ? string.Join(" · ", parts.ToArray()) : "모두 끝난 건입니다";
+            완료설명.Text = parts.Count > 0 ? string.Join(" · ", parts.ToArray()) : "모두 완료된 건입니다";
             웹보기.Visible = 웹열기 != null;
         }
 
@@ -812,8 +831,11 @@ namespace PaymentAlert
                 return;
             }
             string[] names = row.단계목록;
-            string 확인 = string.Format("{0} ({1})\r\n\r\n'{2}' 를 취소하고 '{3}' 까지 끝난 것으로 되돌릴까요?",
-                row.Occ.Item.비용명, row.Occ.Item.기관, names[row.Status.단계], names[row.Status.단계 - 1]);
+            // 시작점이 보이지 않는 흐름에서 첫 단계를 되돌리면 '~까지 완료' 대신 취소만 묻는다.
+            string 확인 = row.Status.단계 == 1 && Stages.시작숨김(row.Occ.Item)
+                ? string.Format("{0} ({1})\r\n\r\n'{2}' 를 취소할까요?", row.Occ.Item.카드이름, row.Occ.Item.기관, names[1])
+                : string.Format("{0} ({1})\r\n\r\n'{2}' 를 취소하고 '{3}' 까지 완료된 것으로 되돌릴까요?",
+                    row.Occ.Item.카드이름, row.Occ.Item.기관, names[row.Status.단계], names[row.Status.단계 - 1]);
             if (MessageBox.Show(this, 확인, "되돌리기", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
                 return;
             if (!적용(row, "되돌리기")) return;
@@ -866,8 +888,8 @@ namespace PaymentAlert
             메뉴.Items.Add(머리줄);
             메뉴.Items.Add(new ToolStripSeparator());
             int n = store.CountFor(row.Occ.연도, row.Occ.Item.Id);
-            메뉴.Items.Add("증빙 첨부…", null, delegate { AttachFile(row); });
-            var 열기 = new ToolStripMenuItem(n > 0 ? string.Format("증빙 폴더 열기 ({0}건)", n) : "증빙 폴더 열기");
+            메뉴.Items.Add("증빙자료 첨부…", null, delegate { AttachFile(row); });
+            var 열기 = new ToolStripMenuItem(n > 0 ? string.Format("증빙자료 폴더 열기 ({0}건)", n) : "증빙자료 폴더 열기");
             열기.Click += delegate { OpenFolder(row); };
             메뉴.Items.Add(열기);
             string 할일 = 되돌릴것(row);
@@ -919,8 +941,8 @@ namespace PaymentAlert
         {
             using (var dlg = new OpenFileDialog())
             {
-                dlg.Title = row.Occ.Item.표시명 + " — 증빙 첨부 (" + row.현재단계명 + ")";
-                dlg.Filter = "증빙 파일 (*.pdf;*.jpg;*.png;*.xlsx;*.hwp;*.docx)" +
+                dlg.Title = row.Occ.Item.표시명 + " — 증빙자료 첨부 (" + row.현재단계명 + ")";
+                dlg.Filter = "증빙자료 (*.pdf;*.jpg;*.png;*.xlsx;*.hwp;*.docx)" +
                              "|*.pdf;*.jpg;*.jpeg;*.png;*.xlsx;*.xls;*.hwp;*.hwpx;*.docx|모든 파일 (*.*)|*.*";
                 dlg.Multiselect = true;
                 if (dlg.ShowDialog(this) != DialogResult.OK) return;
@@ -933,7 +955,7 @@ namespace PaymentAlert
                 }
                 if (failed.Count > 0)
                     MessageBox.Show(this, string.Format("{0}건은 첨부하지 못했습니다.\r\n\r\n{1}", failed.Count, string.Join("\r\n", failed.ToArray())),
-                        "증빙 첨부", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        "증빙자료 첨부", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 RefreshState();
             }
         }
@@ -1170,7 +1192,7 @@ namespace PaymentAlert
             foreach (AlertRow r in overdue)
             {
                 if (shown >= 5) break;
-                names.Add("· " + r.Occ.Item.비용명 + " (" + r.Occ.보정기한일.ToString("yy-MM-dd") + ", " + r.현재단계명 + ")");
+                names.Add("· " + r.Occ.Item.카드이름 + " (" + r.Occ.보정기한일.ToString("yy-MM-dd") + ", " + r.현재단계명 + ")");
                 shown++;
             }
             string tail = overdue.Count > shown ? string.Format("\r\n외 {0}건", overdue.Count - shown) : "";

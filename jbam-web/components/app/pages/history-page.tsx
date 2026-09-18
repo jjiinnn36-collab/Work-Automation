@@ -8,7 +8,7 @@ import { eventSummary, historyCsv, presetRange, toCsv, won } from "@/lib/logic"
 import type { EventRow, HistoryData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useApp } from "@/components/app/app-context"
-import { AmountButton, LoadError, PageHeader, RowMenu, SiteButton, StatCard } from "@/components/app/parts"
+import { AmountButton, LoadError, OrgName, PageHeader, RowMenu, StatCard } from "@/components/app/parts"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -50,7 +50,7 @@ export function HistoryPage() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="이력"
-        description="처리가 끝난 건과 변경 기록"
+        description="처리 완료된 건과 변경 기록"
         actions={
           <Button variant="outline" onClick={exportCsv} disabled={data.rows.length === 0}>
             <DownloadIcon data-icon="inline-start" /> 검색 결과 엑셀 내려받기
@@ -59,7 +59,7 @@ export function HistoryPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="조회 기간" value={period} unit="" />
+        <StatCard label="조회 기간" value={period} unit="" fit={!whole} />
         <StatCard label="처리 완료" value={data.rows.length} />
         <StatCard label="기간 합계" value={won(data.total)} unit="원" />
       </div>
@@ -73,7 +73,7 @@ export function HistoryPage() {
       >
         <Input type="date" aria-label="시작일" className="w-40" value={draft.from} onChange={(e) => setDraft({ ...draft, from: e.target.value })} />
         <span className="text-muted-foreground">~</span>
-        <Input type="date" aria-label="끝일" className="w-40" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
+        <Input type="date" aria-label="종료일" className="w-40" value={draft.to} onChange={(e) => setDraft({ ...draft, to: e.target.value })} />
         <Button type="submit">조회</Button>
         <Button type="button" variant="secondary" onClick={() => setRange(presetRange("this", data.today))}>당해년도</Button>
         <Button type="button" variant="secondary" onClick={() => setRange(presetRange("last", data.today))}>전년도</Button>
@@ -90,7 +90,7 @@ export function HistoryPage() {
           {data.rows.length === 0 ? (
             <Empty className="border">
               <EmptyHeader>
-                <EmptyTitle>이 기간에 처리가 끝난 건이 없습니다</EmptyTitle>
+                <EmptyTitle>이 기간에 처리 완료된 건이 없습니다</EmptyTitle>
                 <EmptyDescription>기간을 넓혀 보세요.</EmptyDescription>
               </EmptyHeader>
             </Empty>
@@ -105,8 +105,8 @@ export function HistoryPage() {
                     <TableHead>기관</TableHead>
                     <TableHead>흐름</TableHead>
                     <TableHead className="text-right">금액</TableHead>
-                    <TableHead>증빙</TableHead>
-                    <TableHead className="pr-4 text-right">동작</TableHead>
+                    <TableHead>증빙자료</TableHead>
+                    <TableHead className="pr-4 text-right">처리</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -115,17 +115,16 @@ export function HistoryPage() {
                       <TableCell className="pl-4 font-medium tabular-nums">{o.doneAt}</TableCell>
                       <TableCell className="tabular-nums text-muted-foreground">{o.due}</TableCell>
                       <TableCell className="font-medium">{o.name}</TableCell>
-                      <TableCell className="text-muted-foreground">{o.org}</TableCell>
+                      <TableCell className="text-muted-foreground"><OrgName o={o} /></TableCell>
                       <TableCell className="text-muted-foreground">{o.flow}</TableCell>
                       <TableCell className="text-right"><AmountButton o={o} /></TableCell>
                       <TableCell>
-                        <Button variant="ghost" size="xs" onClick={() => app.openDocs(o, "증빙")}>
+                        <Button variant="ghost" size="xs" onClick={() => app.openDocs(o)}>
                           {o.attachments > 0 ? `열기 ${o.attachments}건` : "첨부"}
                         </Button>
                       </TableCell>
                       <TableCell className="pr-4">
                         <div className="flex items-center justify-end gap-1.5">
-                          <SiteButton o={o} size="xs" />
                           <RowMenu o={o} />
                         </div>
                       </TableCell>
@@ -160,7 +159,7 @@ export function HistoryPage() {
                   <TableRow>
                     <TableHead className="pl-4">시각</TableHead>
                     <TableHead>항목</TableHead>
-                    <TableHead>동작</TableHead>
+                    <TableHead>구분</TableHead>
                     <TableHead>내용</TableHead>
                     <TableHead className="pr-4">어디서</TableHead>
                   </TableRow>
@@ -171,7 +170,7 @@ export function HistoryPage() {
                       <TableCell className="pl-4 tabular-nums text-muted-foreground">{e.at.slice(0, 16)}</TableCell>
                       <TableCell>
                         <span className="font-medium">{e.name}</span>
-                        {e.org && <span className="ml-1.5 text-xs text-muted-foreground">{e.year}년 · {e.org}</span>}
+                        {e.org && <span className="ml-1.5 inline-flex items-center text-xs text-muted-foreground">{e.year}년 · <OrgName o={e} className="ml-1" /></span>}
                       </TableCell>
                       <TableCell>
                         <Badge variant={e.action === "되돌리기" || e.action.endsWith("삭제") ? "destructive" : "secondary"}>{e.action}</Badge>

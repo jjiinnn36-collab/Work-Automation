@@ -148,6 +148,7 @@ namespace PaymentAlert
                     server.BaseDir = BaseDir;
                     using (Store db = Store.Open(DataPaths.Db(DataDir))) 일일백업(db, 오늘());
                     server.팝업요청 = delegate(string id) { 팝업띄우기(기준일, id); };
+                    server.폴더고르기 = FolderPicker.Pick;
                     server.Start(WebServer.기본포트);
                     try { File.WriteAllText(portFile, server.Port.ToString(CultureInfo.InvariantCulture)); }
                     catch (Exception ex) { Log("웹 포트 기록 실패: " + ex.Message); }

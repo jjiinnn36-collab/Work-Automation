@@ -1,7 +1,7 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { stepStates, stepTooltip } from "@/lib/logic"
+import { progressText, stepStates, stepTooltip, visibleSteps } from "@/lib/logic"
 import type { Occurrence } from "@/lib/types"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
@@ -10,12 +10,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
  * 끝낸 지점 = 꽉 찬 회색, 지금 할 지점 = 꽉 찬 파랑, 아직 아닌 지점 = 테두리만. 선은 지나온 구간만 채운다.
  */
 export function Steps({ o, showLabels = false, className }: { o: Occurrence; showLabels?: boolean; className?: string }) {
-  const states = stepStates(o.stage, o.stages.length, o.done)
+  // 신고 후 납부는 시작점을 그리지 않는다 (hideStart).
+  const { names, stage } = visibleSteps(o)
+  const states = stepStates(stage, names.length, o.done)
   const muted = o.beforeStart === true
 
   return (
-    <div className={cn("flex w-full items-start", className)} aria-label={`${o.stage + 1}/${o.stages.length} ${o.stageName}`}>
-      {o.stages.map((name, i) => {
+    <div className={cn("flex w-full items-start", className)} aria-label={progressText(o)}>
+      {names.map((name, i) => {
         const s = states[i]
         return (
           <div key={name} className="relative flex min-w-0 flex-1 flex-col items-center gap-1.5">
@@ -40,11 +42,11 @@ export function Steps({ o, showLabels = false, className }: { o: Occurrence; sho
                       s === "current" && muted && "border-muted-foreground/40 bg-background",
                       s === "future" && "border-border bg-background"
                     )}
-                    aria-label={stepTooltip(o.stages, i, s)}
+                    aria-label={stepTooltip(names, i, s)}
                   />
                 }
               />
-              <TooltipContent>{stepTooltip(o.stages, i, s)}</TooltipContent>
+              <TooltipContent>{stepTooltip(names, i, s)}</TooltipContent>
             </Tooltip>
             {showLabels && (
               <span

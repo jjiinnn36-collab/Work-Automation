@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import type { Occurrence } from "@/lib/types"
-import { AdvanceButton, AmountButton, DueText, RowMenu, SiteOrDocs, StatusBadge } from "@/components/app/parts"
+import { AdvanceButton, AmountButton, DueText, OrgName, RowMenu, SiteOrDocs, StatusBadge } from "@/components/app/parts"
 import { NextAction, Steps } from "@/components/app/steps"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -31,7 +31,7 @@ export function OccurrenceTable({ rows, empty, showYear = false }: { rows: Occur
             <TableHead>항목</TableHead>
             <TableHead className="w-56">진행</TableHead>
             <TableHead className="w-36 text-right">금액</TableHead>
-            <TableHead className="w-64 pr-4 text-right">동작</TableHead>
+            <TableHead className="w-64 pr-4 text-right">처리</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -54,9 +54,8 @@ export function OccurrenceTable({ rows, empty, showYear = false }: { rows: Occur
                 <TableCell className="align-top whitespace-normal">
                   <div className="font-medium text-foreground">{o.name}</div>
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    <span>{o.org}</span>
+                    <OrgName o={o} />
                     <StatusBadge o={o} />
-                    {o.group && <span className="rounded bg-muted px-1">분할 {o.group}</span>}
                   </div>
                 </TableCell>
                 <TableCell className="align-top">

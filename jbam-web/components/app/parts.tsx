@@ -2,21 +2,25 @@
 
 import * as React from "react"
 import {
+  ArrowLeftIcon,
   CheckIcon, ExternalLinkIcon, FileTextIcon, HistoryIcon, MoreHorizontalIcon, PaperclipIcon,
-  RotateCcwIcon, WalletIcon, LayersIcon, ClockIcon, ArrowRightIcon, Undo2Icon,
+  RotateCcwIcon, ClockIcon, ArrowRightIcon, Undo2Icon, PencilIcon,
 } from "lucide-react"
 
 import { cn } from "@/lib/utils"
-import { md, safeUrl, won } from "@/lib/logic"
+import { errorMessage, post } from "@/lib/api"
+import { md, parseWon, safeUrl, won } from "@/lib/logic"
 import type { Occurrence } from "@/lib/types"
 import { useApp } from "@/components/app/app-context"
 import { Badge } from "@/components/ui/badge"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel,
   DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Input } from "@/components/ui/input"
+import { toast } from "@/components/ui/toast"
 
 export function PageHeader({ title, description, actions }: { title: string; description?: React.ReactNode; actions?: React.ReactNode }) {
   return (
@@ -32,19 +36,25 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 /** 집계 칸. 0 건이면 조용히, 경고 칸은 건수가 있을 때만 빨갛게 (AC-W57, W79). */
 export function StatCard({
-  label, value, unit = "건", hint, tone = "default",
-}: { label: string; value: number | string; unit?: string; hint?: React.ReactNode; tone?: "default" | "danger" | "action" }) {
+  label, value, unit = "건", hint, tone = "default", fit = false,
+}: {
+  label: string; value: number | string; unit?: string; hint?: React.ReactNode; tone?: "default" | "danger" | "action"
+  /** 긴 값(날짜 범위 등)을 한 줄에 맞춰 글자만 줄인다 — 카드 높이는 그대로 (사용자 요청 2026-09-18). */
+  fit?: boolean
+}) {
   const zero = value === 0
   const danger = tone === "danger" && !zero
   const action = tone === "action" && !zero
   return (
-    <Card size="sm" className={cn(danger && "ring-destructive/40")}>
+    <Card size="sm" className={cn(danger && "ring-destructive/40", fit && "@container")}>
       <CardHeader>
         <CardDescription className={cn(danger && "text-destructive", action && "text-action")}>{label}</CardDescription>
         {/* CardTitle 은 작은 카드에서 글자를 줄이므로 숫자는 따로 그린다. */}
         <div
           className={cn(
             "font-heading text-2xl leading-tight font-semibold tabular-nums sm:text-3xl",
+            // 칸 높이는 한 줄 기준으로 고정하고, 글자는 카드 폭에 맞춰 줄인다.
+            fit && "flex h-[1.875rem] items-center overflow-hidden whitespace-nowrap text-[clamp(0.8rem,7.5cqi,1.5rem)] sm:h-[2.34375rem] sm:text-[clamp(0.8rem,7.5cqi,1.875rem)]",
             zero && "text-muted-foreground",
             danger && "text-destructive",
             action && "text-action"
@@ -96,59 +106,164 @@ export function DueText({ o, className }: { o: Occurrence; className?: string })
   )
 }
 
-/** 금액 칸. 모르면 그 자리에서 [입력] (AC-W29), 시작일 이전 건은 입력을 숨긴다 (AC-W31). */
-export function AmountButton({ o, className }: { o: Occurrence; className?: string }) {
+/**
+ * 금액 칸: ✎ 를 누르면 그 칸이 입력칸으로 바뀌고 저장·취소만 있다 (ADR-0023, 사용자 요청).
+ * Enter = 저장, Esc = 취소.
+ */
+function InlineAmount({ o, className }: { o: Occurrence; className?: string }) {
   const app = useApp()
-  if (!o.paid) return <span className={cn("text-muted-foreground", className)}>—</span>
-  if (o.amount !== null)
+  const word = o.loan ? "지급액" : "금액"
+  const [editing, setEditing] = React.useState(false)
+  const [value, setValue] = React.useState("")
+  const [busy, setBusy] = React.useState(false)
+  const inputRef = React.useRef<HTMLInputElement>(null)
+
+  React.useEffect(() => {
+    if (editing) inputRef.current?.select()
+  }, [editing])
+
+  async function save() {
+    const v = parseWon(value)
+    if (v === null) {
+      toast.add({ title: "원 단위 숫자로 넣어 주세요", type: "error" })
+      inputRef.current?.focus()
+      return
+    }
+    if (v === o.amount) {
+      setEditing(false)
+      return
+    }
+    setBusy(true)
+    try {
+      await post("/api/amount", { y: o.year, id: o.id, amount: v })
+      toast.add({ title: `${word}을 저장했습니다`, type: "success" })
+      setEditing(false)
+      app.refresh()
+    } catch (e) {
+      toast.add({ title: "저장하지 못했습니다", description: errorMessage(e), type: "error" })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!editing)
     return (
-      <Button
-        variant="ghost"
-        size="sm"
-        className={cn("-mx-2 font-semibold tabular-nums", className)}
-        onClick={() => app.openAmount(o)}
-        title="금액 고치기"
-      >
+      // ✎ 는 금액 앞에 둔다 — '원' 이 다른 금액·'미확인 · 입력' 과 같은 오른쪽 끝에 맞게 (사용자 요청 2026-09-18).
+      <span className={cn("inline-flex items-center gap-1 font-semibold tabular-nums", className)}>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label={`${o.name} ${word} 고치기`}
+          title={`${word} 고치기`}
+          onClick={() => {
+            setValue(won(o.amount))
+            setEditing(true)
+          }}
+        >
+          <PencilIcon />
+        </Button>
         {won(o.amount)}원
-      </Button>
+      </span>
     )
+  return (
+    <form
+      className={cn("inline-flex items-center gap-1", className)}
+      onSubmit={(e) => {
+        e.preventDefault()
+        save()
+      }}
+    >
+      <Input
+        ref={inputRef}
+        inputMode="numeric"
+        aria-label={`${o.name} ${word}`}
+        className="h-7 w-32 text-right tabular-nums"
+        value={value}
+        disabled={busy}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault()
+            e.stopPropagation()
+            setEditing(false)
+          }
+        }}
+      />
+      <Button type="submit" size="xs" disabled={busy}>
+        저장
+      </Button>
+      <Button type="button" size="xs" variant="outline" disabled={busy} onClick={() => setEditing(false)}>
+        취소
+      </Button>
+    </form>
+  )
+}
+
+/** 금액 칸. 모르면 그 자리에서 [입력] (AC-W29), 시작일 이전 건은 입력을 숨긴다 (AC-W31). */
+/** readOnly: 금액을 보여 주기만 한다 (받은 알림, 사용자 요청 2026-09-18). 금액이 없을 때의 '미확인 · 입력' 은 그대로. */
+export function AmountButton({ o, className, readOnly }: { o: Occurrence; className?: string; readOnly?: boolean }) {
+  const app = useApp()
+  if (!o.paid) return <None className={className}>해당 없음</None>
+  if (readOnly && o.amount !== null) return <span className={cn("font-semibold tabular-nums", className)}>{won(o.amount)}원</span>
+  // 금액이 있으면 모든 건이 같은 모양: ✎ + 금액, 그 칸에서 바로 고친다 (사용자 요청 2026-09-18).
+  if (o.amount !== null && !o.beforeStart) return <InlineAmount o={o} className={className} />
+  if (o.amount !== null) return <span className={cn("font-semibold tabular-nums", className)}>{won(o.amount)}원</span>
   if (o.beforeStart) return <span className={cn("text-muted-foreground", className)}>미확인</span>
   return (
-    <Button variant="ghost" size="sm" className={cn("-mx-2 font-semibold text-action", className)} onClick={() => app.openAmount(o)}>
+    <Button variant="ghost" size="sm" className={cn("-mx-2.5 text-sm font-semibold text-action", className)} onClick={() => app.openAmount(o)}>
       미확인 · 입력
     </Button>
   )
 }
 
+/** 빈 칸 표시: 작고 흐린 글씨. 적을 수 있는데 비었으면 '없음', 원래 없는 칸이면 '해당 없음' (사용자 요청 2026-09-18). */
+export function None({ children = "없음", className }: { children?: React.ReactNode; className?: string }) {
+  return <span className={cn("text-xs font-normal text-muted-foreground/70", className)}>{children}</span>
+}
+
+type SiteSource = { siteUrl?: string; siteName?: string; orgSiteUrl?: string; orgSiteName?: string }
+
 /**
- * 항목에 신고 홈페이지 주소가 있으면 바로 가는 버튼. 끝난 건·시작 전 건에도 보인다 —
- * 항목 관리에서 주소를 넣으면 모든 탭에 곧바로 나타나야 한다 (사용자 요청 2026-09-16).
+ * 기관명 옆 작은 '바깥으로 열기' 아이콘. 새 창으로 연다.
+ * 같은 기관의 한 건에만 주소가 있어도 서버가 orgSiteUrl 로 넘겨 모든 줄에 붙는다.
  */
-export function SiteButton({ o, size = "sm" }: { o: { siteUrl: string; siteName: string }; size?: "sm" | "xs" }) {
-  const url = o.siteUrl ? safeUrl(o.siteUrl) : null
+export function SiteIcon({ o }: { o: SiteSource }) {
+  const raw = o.orgSiteUrl || o.siteUrl || ""
+  const url = raw ? safeUrl(raw) : null
   if (!url) return null
+  const label = `${(o.orgSiteUrl ? o.orgSiteName : o.siteName) || "홈페이지"} 열기`
   return (
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      title={url}
-      className={buttonVariants({ variant: "outline", size })}
+      aria-label={`${label} (새 창)`}
+      title={label}
+      className="inline-flex size-5 shrink-0 items-center justify-center rounded text-muted-foreground outline-none hover:bg-muted hover:text-action focus-visible:ring-3 focus-visible:ring-ring/50"
     >
-      {o.siteName || "홈페이지"} <ExternalLinkIcon data-icon="inline-end" />
+      <ExternalLinkIcon className="size-3.5" />
     </a>
   )
 }
 
-/** 신고 홈페이지 버튼과 받은 문서 열기. 홈페이지가 있어도 문서 열기는 따로 남긴다 (AC-W93, W94). */
+/** 기관명 + 홈페이지 아이콘. 목록·카드 어디서나 같은 모양. */
+export function OrgName({ o, className }: { o: { org: string } & SiteSource; className?: string }) {
+  return (
+    <span className={cn("inline-flex items-center gap-0.5", className)}>
+      {o.org}
+      <SiteIcon o={o} />
+    </span>
+  )
+}
+
+/** 증빙자료 열기. 홈페이지는 기관명 옆 아이콘으로 옮겼다 (사용자 요청 2026-09-18). */
 export function SiteOrDocs({ o, size = "sm" }: { o: Occurrence; size?: "sm" | "xs" }) {
   const app = useApp()
   return (
     <>
-      <SiteButton o={o} size={size} />
       {!o.done && !o.beforeStart && (
-        <Button variant="outline" size={size} onClick={() => app.openDocs(o, "받은문서")}>
-          <FileTextIcon data-icon="inline-start" /> 문서 열기
+        <Button variant="outline" size={size} onClick={() => app.openDocs(o)}>
+          <FileTextIcon data-icon="inline-start" /> 증빙자료{o.attachments > 0 ? ` ${o.attachments}` : ""}
         </Button>
       )}
     </>
@@ -184,7 +299,7 @@ export function RowMenu({ o }: { o: Occurrence }) {
   const url = o.siteUrl ? safeUrl(o.siteUrl) : null
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`${o.name} 동작`} />}>
+      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`${o.name} 더보기`} />}>
         <MoreHorizontalIcon />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
@@ -215,22 +330,9 @@ export function RowMenu({ o }: { o: Occurrence }) {
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
-          <DropdownMenuItem onClick={() => app.openDocs(o, "받은문서")}>
-            <FileTextIcon /> 받은 문서
+          <DropdownMenuItem onClick={() => app.openDocs(o)}>
+            <PaperclipIcon /> 증빙자료{o.attachments > 0 ? ` (${o.attachments})` : ""}
           </DropdownMenuItem>
-          <DropdownMenuItem onClick={() => app.openDocs(o, "증빙")}>
-            <PaperclipIcon /> 증빙{o.attachments > 0 ? ` (${o.attachments})` : ""}
-          </DropdownMenuItem>
-          {o.paid && !o.beforeStart && (
-            <DropdownMenuItem onClick={() => app.openAmount(o)}>
-              <WalletIcon /> 금액 입력
-            </DropdownMenuItem>
-          )}
-          {o.group && (
-            <DropdownMenuItem onClick={() => app.openGroup(o.year, o.group)}>
-              <LayersIcon /> 회차 금액 한 번에
-            </DropdownMenuItem>
-          )}
           <DropdownMenuItem onClick={() => app.openEvents({ year: o.year, id: o.id, name: o.name })}>
             <HistoryIcon /> 변경 기록
           </DropdownMenuItem>
@@ -250,5 +352,18 @@ export function LoadError({ message }: { message: string }) {
     <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
       자료를 불러오지 못했습니다: {message}
     </div>
+  )
+}
+
+/** 창 왼쪽 위의 '← 뒤로가기'. 차입 스케줄 창도 같은 것을 쓴다. */
+export function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="-ml-1 mb-1 inline-flex w-fit items-center gap-1 rounded-md px-1 text-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <ArrowLeftIcon className="size-3.5" /> 뒤로가기
+    </button>
   )
 }

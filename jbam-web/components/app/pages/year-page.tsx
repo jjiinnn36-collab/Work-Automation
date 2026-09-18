@@ -119,7 +119,7 @@ export function YearPage() {
 
       <section className="flex flex-col gap-3">
         <h3 className="flex items-baseline gap-2 text-base font-semibold">
-          지난 건 <span className="text-sm font-normal text-muted-foreground">{finished.length}건 · 끝난 건과 추적 시작 전 건 · 최근 것이 위로</span>
+          지난 건 <span className="text-sm font-normal text-muted-foreground">{finished.length}건 · 완료된 건과 추적 시작 전 건 · 최근 것이 위로</span>
         </h3>
         <OccurrenceTable rows={finished} empty="지난 건이 없습니다" />
       </section>
