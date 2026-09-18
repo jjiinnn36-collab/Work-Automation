@@ -68,6 +68,9 @@ namespace PaymentAlert
         /// </summary>
         public Action<string> 팝업요청;
 
+        /// <summary>이 PC 에 폴더 선택 창을 띄운다 (제목, 처음 폴더) → 고른 경로, 취소면 null. 없으면 화면에서 고를 수 없다.</summary>
+        public Func<string, string, string> 폴더고르기;
+
         public WebServer(string dataDir, string webRoot, Func<DateTime> 오늘)
         {
             this.dataDir = dataDir;
@@ -270,6 +273,7 @@ namespace PaymentAlert
                     case "/api/month": Send(ctx.Response, 200, Month(env, q["ym"])); return;
                     case "/api/year": Send(ctx.Response, 200, Year(env, q["y"])); return;
                     case "/api/items": Send(ctx.Response, 200, Items(env)); return;
+                    case "/api/loans": Send(ctx.Response, 200, 차입목록(env)); return;
                     case "/api/history": Send(ctx.Response, 200, History(env, q["from"], q["to"])); return;
                     case "/api/attachments":
                         Send(ctx.Response, 200, AttachmentList(env, 연도(q["y"]), 아이디(q["id"])));
@@ -291,11 +295,17 @@ namespace PaymentAlert
         {
             HttpListenerRequest req = ctx.Request;
 
-            // 첨부는 본문이 파일 자체라 양식으로 읽지 않는다.
+            // 첨부·가져오기는 본문이 파일 자체라 양식으로 읽지 않는다.
             if (path == "/api/attach")
             {
                 using (Env env = Env.Open(dataDir, 오늘()))
                     Send(ctx.Response, 200, Attach(env, req));
+                return;
+            }
+            if (path == "/api/import/loans")
+            {
+                using (Env env = Env.Open(dataDir, 오늘()))
+                    Send(ctx.Response, 200, 차입가져오기(env, req));
                 return;
             }
 
@@ -322,6 +332,8 @@ namespace PaymentAlert
                     case "/api/settings/apikey": Send(ctx.Response, 200, SetApiKey(env, f)); return;
                     case "/api/holidays/refresh": Send(ctx.Response, 200, RefreshHolidays(env)); return;
                     case "/api/backup": Send(ctx.Response, 200, BackupNow(env)); return;
+                    case "/api/settings/backup-dir": Send(ctx.Response, 200, SetBackupDir(env, f)); return;
+                    case "/api/settings/backup-dir/pick": Send(ctx.Response, 200, PickBackupDir(env)); return;
                     case "/api/attach/delete": Send(ctx.Response, 200, DeleteAttachment(env, f)); return;
                 }
             }
@@ -375,6 +387,33 @@ namespace PaymentAlert
             public Dictionary<string, string> 마지막동작
             {
                 get { if (_마지막동작 == null) _마지막동작 = Db.마지막동작(); return _마지막동작; }
+            }
+
+            Dictionary<string, PaymentItem> _기관사이트;
+            /// <summary>
+            /// 기관마다 홈페이지 하나: 같은 기관 중 목록 순서로 먼저 주소가 있는 항목 (사용자 요청 2026-09-18).
+            /// 한 건에만 주소를 넣어도 같은 기관의 모든 줄에 아이콘이 붙는다.
+            /// </summary>
+            public PaymentItem 기관사이트(string 기관)
+            {
+                if (_기관사이트 == null)
+                {
+                    _기관사이트 = new Dictionary<string, PaymentItem>(StringComparer.Ordinal);
+                    foreach (PaymentItem x in Master)
+                    {
+                        string k = (x.기관 ?? "").Trim();
+                        if (k.Length > 0 && !string.IsNullOrWhiteSpace(x.홈페이지주소) && !_기관사이트.ContainsKey(k)) _기관사이트[k] = x;
+                    }
+                }
+                PaymentItem hit;
+                return _기관사이트.TryGetValue((기관 ?? "").Trim(), out hit) ? hit : null;
+            }
+
+            /// <summary>화면의 기관명 옆 아이콘에 쓸 주소·이름. 제 주소가 있으면 그것, 없으면 같은 기관의 주소.</summary>
+            public JObj 기관사이트붙이기(JObj o, PaymentItem it)
+            {
+                PaymentItem src = it != null && !string.IsNullOrWhiteSpace(it.홈페이지주소) ? it : (it != null ? 기관사이트(it.기관) : null);
+                return o.Set("orgSiteUrl", src != null ? src.홈페이지주소 : "").Set("orgSiteName", src != null ? (src.홈페이지명 ?? "") : "");
             }
 
             public PaymentItem Item(string id)
@@ -581,14 +620,16 @@ namespace PaymentAlert
             {
                 AmountRecord a;
                 decimal? 올해 = null;
-                bool 입력함 = it.납부있음 && env.Amounts.TryGetValue(env.Today.Year + "\t" + it.Id, out a);
+                // 올해 기한이 없는 항목(다른 해의 차입 회차 등)은 올해 금액이 해당 없다 — '미확인' 으로 보이면 안 된다.
+                bool 올해있음 = it.납부있음 && it.해당연도(env.Today.Year);
+                bool 입력함 = 올해있음 && env.Amounts.TryGetValue(env.Today.Year + "\t" + it.Id, out a);
                 if (입력함) 올해 = env.Amounts[env.Today.Year + "\t" + it.Id].금액;
-                else if (it.납부있음 && it.금액규칙 == AmountRules.고정) 올해 = it.고정금액;
+                else if (올해있음 && it.금액규칙 == AmountRules.고정) 올해 = it.고정금액;
 
-                list.Add(ItemDto(it)
+                list.Add(env.기관사이트붙이기(ItemDto(it)
                     .Set("thisYearAmount", 올해)
                     .Set("thisYearEntered", 입력함)
-                    .Set("thisYearUnknown", !올해.HasValue && it.납부있음));
+                    .Set("thisYearUnknown", !올해.HasValue && 올해있음), it));
             }
             return Head(env).Set("items", list);
         }
@@ -692,6 +733,7 @@ namespace PaymentAlert
         {
             int y = 연도(f["y"]);
             PaymentItem it = 항목(env, f["id"]);
+            연도확인(it, y);   // 쓰기 전에 본다 — 거절할 요청이 기록을 남기면 안 된다
             int 기대 = -1;
             string s = f["stage"];
             if (!string.IsNullOrEmpty(s) &&
@@ -718,6 +760,7 @@ namespace PaymentAlert
         {
             int y = 연도(f["y"]);
             PaymentItem it = 항목(env, f["id"]);
+            연도확인(it, y);
             decimal v = 금액(f["amount"], "금액");
 
             var rec = new AmountRecord();
@@ -756,6 +799,12 @@ namespace PaymentAlert
             PaymentItem it = 항목읽기(env, f, id, months[0]);
             PaymentItem 기존 = env.Item(id);
             it.묶음 = 기존 != null ? 기존.묶음 : "";
+            it.차입 = 기존 != null && 기존.차입;   // 차입 회차는 저장해도 차입 회차 (응답의 이름·단계가 맞게)
+            // 유효연도는 보낸 경우에만 바꾼다. 화면이 모르는 칸이라고 가져온 차입 회차의 기간이 풀리면 안 된다.
+            it.시작연도 = f["startYear"] != null ? 연도칸(f["startYear"], "시작 연도") : (기존 != null ? 기존.시작연도 : null);
+            it.종료연도 = f["endYear"] != null ? 연도칸(f["endYear"], "종료 연도") : (기존 != null ? 기존.종료연도 : null);
+            if (it.시작연도.HasValue && it.종료연도.HasValue && it.종료연도 < it.시작연도)
+                throw new HttpError(400, "종료 연도가 시작 연도보다 빠릅니다.");
 
             env.Db.UpsertItem(it);
 
@@ -861,6 +910,7 @@ namespace PaymentAlert
             NameValueCollection q = Query(req);
             int y = 연도(q["y"]);
             PaymentItem it = 항목(env, q["id"]);
+            연도확인(it, y);
 
             string raw = req.Headers["X-File-Name"];
             if (string.IsNullOrEmpty(raw)) throw new HttpError(400, "파일 이름이 없습니다.");
@@ -920,7 +970,31 @@ namespace PaymentAlert
 
         // ══ 설정·관리 ═══════════════════════════════════════════════ ADR-0008
 
-        string 백업폴더() { return Backups.폴더(string.IsNullOrEmpty(BaseDir) ? dataDir : BaseDir, dataDir); }
+        string 설정폴더() { return string.IsNullOrEmpty(BaseDir) ? dataDir : BaseDir; }
+        string 백업폴더() { return Backups.폴더(설정폴더(), dataDir); }
+
+        /// <summary>POST /api/settings/backup-dir/pick — 폴더 선택 창을 띄워 고른 곳으로 바꾼다. 취소하면 그대로.</summary>
+        JObj PickBackupDir(Env env)
+        {
+            if (폴더고르기 == null) throw new HttpError(501, "이 실행 방식에서는 폴더 선택 창을 열 수 없습니다.");
+            string 고른 = 폴더고르기("백업 폴더 선택", 백업폴더());
+            if (string.IsNullOrEmpty(고른))
+                return new JObj().Set("ok", true).Set("cancelled", true).Set("backupDir", 백업폴더());
+            string 이유 = Backups.폴더검사(고른, webRoot);
+            if (이유 != null) throw new HttpError(400, 이유);
+            Backups.폴더저장(설정폴더(), 고른);
+            return new JObj().Set("ok", true).Set("cancelled", false).Set("backupDir", 백업폴더()).Set("custom", Backups.따로정함(설정폴더()));
+        }
+
+        /// <summary>POST /api/settings/backup-dir  dir=폴더 (빈 값 = 기본 위치). 이미 만든 사본은 옮기지 않는다.</summary>
+        JObj SetBackupDir(Env env, NameValueCollection f)
+        {
+            string dir = (f["dir"] ?? "").Trim();
+            string 이유 = Backups.폴더검사(dir, webRoot);
+            if (이유 != null) throw new HttpError(400, 이유);
+            Backups.폴더저장(설정폴더(), dir);
+            return new JObj().Set("ok", true).Set("backupDir", 백업폴더()).Set("custom", Backups.따로정함(설정폴더()));
+        }
 
         JObj Settings(Env env)
         {
@@ -944,6 +1018,8 @@ namespace PaymentAlert
                 .Set("dbPath", DataPaths.Db(dataDir))
                 .Set("logPath", DataPaths.로그(dataDir))
                 .Set("backupDir", 백업폴더())
+                .Set("backupDirDefault", Backups.기본폴더(dataDir))
+                .Set("backupDirCustom", Backups.따로정함(설정폴더()))
                 .Set("backups", backups)
                 .Set("apiKeySet", System.IO.File.Exists(DataPaths.ApiKey(dataDir)))
                 .Set("holidayYears", years)
@@ -1053,7 +1129,7 @@ namespace PaymentAlert
             return new JObj()
                 .Set("id", it.Id)
                 .Set("org", it.기관)
-                .Set("name", it.비용명)
+                .Set("name", it.카드이름)
                 .Set("flow", it.진행흐름.ToString())
                 .Set("month", it.월)
                 .Set("day", it.말일 ? "말일" : it.일.ToString(Inv))
@@ -1067,7 +1143,11 @@ namespace PaymentAlert
                 .Set("paid", it.납부있음)
                 .Set("stages", Stages.For(it))
                 .Set("actions", 행동목록(it))
-                .Set("noAmount", it.진행흐름 == Flow.사용자설정 && it.금액없음);
+                .Set("hideStart", Stages.시작숨김(it))
+                .Set("noAmount", it.진행흐름 == Flow.사용자설정 && it.금액없음)
+                .Set("loan", it.차입)
+                .Set("startYear", it.시작연도.HasValue ? (object)it.시작연도.Value : null)
+                .Set("endYear", it.종료연도.HasValue ? (object)it.종료연도.Value : null);
         }
 
         /// <summary>각 지점에 도달할 때 누를 버튼 문구. 첫 칸(시작 지점)은 비어 있다.</summary>
@@ -1116,17 +1196,21 @@ namespace PaymentAlert
             bool confirmedToday = 오늘대기 ||
                 (st != null && st.최종확인일.HasValue && st.최종확인일.Value.Date == env.Today);
             // 오늘 '오늘은 대기' 를 눌렀고 그 뒤로 다른 동작이 없는 건 — 웹에서 대기 취소를 보인다 (ADR-0022).
+            // 받은 알림은 목록을 만들기 전에 오늘 확인 표시를 지워 두므로(대기한 건도 화면에 남기려고) 오늘대기 로 대신 확인한다.
+            // 진행도 오늘 확인 표시를 남기므로 마지막 동작이 '대기' 인지는 늘 본다.
             string 마지막;
-            bool deferredToday = !done && st != null && st.최종확인일.HasValue && st.최종확인일.Value.Date == env.Today &&
-                (오늘대기 || (env.마지막동작.TryGetValue(o.Key, out 마지막) && 마지막 == "대기"));
+            bool 오늘확인 = 오늘대기 || (st != null && st.최종확인일.HasValue && st.최종확인일.Value.Date == env.Today);
+            bool deferredToday = !done && st != null && 오늘확인 &&
+                env.마지막동작.TryGetValue(o.Key, out 마지막) && 마지막 == "대기";
 
-            return new JObj()
+            return env.기관사이트붙이기(new JObj()
                 .Set("year", o.연도)
                 .Set("id", it.Id)
                 .Set("org", it.기관)
-                .Set("name", it.비용명)
+                .Set("name", it.카드이름)
                 .Set("flow", it.진행흐름.ToString())
                 .Set("stages", stages)
+                .Set("hideStart", Stages.시작숨김(it))
                 .Set("stage", stage)
                 .Set("stageName", stages[stage])
                 .Set("nextStage", done ? null : stages[stage + 1])
@@ -1154,11 +1238,19 @@ namespace PaymentAlert
                 .Set("changedAt", st != null && st.변경일시.HasValue ? st.변경일시.Value.ToString("yyyy-MM-dd HH:mm", Inv) : null)
                 .Set("attachments", env.Files.CountFor(o.연도, it.Id))
                 .Set("beforeStart", before)
-                .Set("memo", it.비고 ?? "");
+                .Set("loan", it.차입)
+                .Set("memo", it.비고 ?? ""), it);
+        }
+
+        static void 연도확인(PaymentItem it, int year)
+        {
+            if (!it.해당연도(year))
+                throw new HttpError(400, "이 항목은 " + year + "년에 기한이 없습니다 (유효연도 밖).");
         }
 
         static Occurrence OccurrenceOf(Env env, PaymentItem it, int year)
         {
+            연도확인(it, year);
             var one = new List<PaymentItem> { it };
             foreach (Occurrence o in Scheduler.BuildOccurrences(one, env.Cal, new DateTime(year, 7, 1), env.Amounts))
                 if (o.연도 == year) return o;

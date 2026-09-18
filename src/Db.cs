@@ -199,7 +199,7 @@ namespace PaymentAlert
     public sealed class Store : IDisposable
     {
         public const string 파일이름 = "납부알림.db";
-        public const int 스키마버전 = 3;
+        public const int 스키마버전 = 5;
 
         readonly Conn c;
         public string 파일경로 { get; private set; }
@@ -284,6 +284,34 @@ namespace PaymentAlert
 
             if (v < 2) c.Tx(이관2);
             if (v < 3) c.Tx(이관3);
+            if (v < 4) c.Tx(이관4);
+            if (v < 5) c.Tx(이관5);
+        }
+
+        /// <summary>4판 → 5판. 차입건에 차입명·약칭을 더한다 (사용자 요청 2026-09-18). 화면의 차입처 자리에 약칭(없으면 차입명)을 쓴다.</summary>
+        void 이관5()
+        {
+            // 4판 표를 새로 만든 경우(판 번호만 낮춘 파일)에도 두 번 더하지 않는다.
+            var 있는칸 = new HashSet<string>(StringComparer.Ordinal);
+            c.Each("PRAGMA table_info(loans)", delegate(Reader r) { 있는칸.Add(r.Str(1)); });
+            if (!있는칸.Contains("차입명")) c.Run("ALTER TABLE loans ADD COLUMN 차입명 TEXT NOT NULL DEFAULT ''");
+            if (!있는칸.Contains("약칭")) c.Run("ALTER TABLE loans ADD COLUMN 약칭 TEXT NOT NULL DEFAULT ''");
+            SetMeta("schema_version", "5");
+        }
+
+        /// <summary>
+        /// 3판 → 4판. 항목 유효연도 칸과 가져온 차입건 표를 더한다 (ADR-0023).
+        /// 기존 항목은 유효연도가 비어 있어(제한 없음) 동작이 그대로다.
+        /// </summary>
+        void 이관4()
+        {
+            c.Run("ALTER TABLE items ADD COLUMN 시작연도 INTEGER");
+            c.Run("ALTER TABLE items ADD COLUMN 종료연도 INTEGER");
+            c.Run("CREATE TABLE IF NOT EXISTS loans(" +
+                  "묶음 TEXT PRIMARY KEY, 거래처 TEXT NOT NULL, 차입일 TEXT NOT NULL, 액면 TEXT NOT NULL, " +
+                  "이율 TEXT, 만기 TEXT, 파일 TEXT NOT NULL DEFAULT '', 시트 TEXT NOT NULL DEFAULT '', 가져온일시 TEXT, " +
+                  "UNIQUE(거래처, 차입일))");
+            SetMeta("schema_version", "4");
         }
 
         /// <summary>
@@ -384,8 +412,8 @@ namespace PaymentAlert
         }
 
         // ── 납부 항목 ──
-        const string 항목칸 = "id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,홈페이지명,홈페이지주소,묶음,단계정의,금액없음";
-        const string 항목자리 = "?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?";
+        const string 항목칸 = "id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,홈페이지명,홈페이지주소,묶음,단계정의,금액없음,시작연도,종료연도";
+        const string 항목자리 = "?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?";
 
         public List<PaymentItem> LoadMaster()
         {
@@ -413,8 +441,13 @@ namespace PaymentAlert
                         Stages.단계정의읽기(it, r.Str(14));
                         it.금액없음 = r.Long(15) != 0;
                     }
+                    if (!r.IsNull(16)) it.시작연도 = r.Int(16);
+                    if (!r.IsNull(17)) it.종료연도 = r.Int(17);
                     list.Add(it);
                 });
+            var 차입묶음 = new HashSet<string>(StringComparer.Ordinal);
+            c.Each("SELECT 묶음 FROM loans", delegate(Reader r) { 차입묶음.Add(r.Str(0)); });
+            foreach (PaymentItem it in list) it.차입 = it.묶음.Length > 0 && 차입묶음.Contains(it.묶음);
             return list;
         }
 
@@ -427,7 +460,8 @@ namespace PaymentAlert
                 it.Id, it.기관 ?? "", it.비용명 ?? "", it.진행흐름.ToString(), it.월, it.말일,
                 it.말일 ? 0 : it.일, it.알림영업일, rule, M(fixedAmount), it.비고 ?? "",
                 it.홈페이지명 ?? "", it.홈페이지주소 ?? "", it.묶음 ?? "",
-                Stages.단계정의(it), it.진행흐름 == Flow.사용자설정 && it.금액없음 ? 1 : 0, 순서 };
+                Stages.단계정의(it), it.진행흐름 == Flow.사용자설정 && it.금액없음 ? 1 : 0,
+                (object)it.시작연도, (object)it.종료연도, 순서 };
         }
 
         /// <summary>항목 전체를 바꾼다. 진행 상태·금액은 id 로 이어지므로 건드리지 않는다.</summary>
@@ -471,7 +505,8 @@ namespace PaymentAlert
                           "진행흐름=excluded.진행흐름, 월=excluded.월, 말일=excluded.말일, 일=excluded.일, " +
                           "알림영업일=excluded.알림영업일, 금액규칙=excluded.금액규칙, 고정금액=excluded.고정금액, 비고=excluded.비고, " +
                           "홈페이지명=excluded.홈페이지명, 홈페이지주소=excluded.홈페이지주소, 묶음=excluded.묶음, " +
-                          "단계정의=excluded.단계정의, 금액없음=excluded.금액없음",
+                          "단계정의=excluded.단계정의, 금액없음=excluded.금액없음, " +
+                          "시작연도=excluded.시작연도, 종료연도=excluded.종료연도",
                         항목값(it, 다음순서));
                 }
                 SetMeta("master_updated_at", DT(DateTime.Now));
@@ -538,6 +573,26 @@ namespace PaymentAlert
             return moved;
         }
 
+        /// <summary>항목을 목록의 위치(0부터)로 옮긴다. 끌어서 옮기기에 쓴다. 범위를 넘으면 끝에 둔다.</summary>
+        public bool MoveItemTo(string id, int 위치)
+        {
+            bool moved = false;
+            c.Tx(delegate
+            {
+                var ids = new List<string>();
+                c.Each("SELECT id FROM items ORDER BY 순서, id", delegate(Reader r) { ids.Add(r.Str(0)); });
+                int i = ids.IndexOf(id);
+                if (i < 0) return;
+                int j = Math.Max(0, Math.Min(ids.Count - 1, 위치));
+                if (i == j) return;
+                ids.RemoveAt(i);
+                ids.Insert(j, id);
+                for (int n = 0; n < ids.Count; n++) c.Run("UPDATE items SET 순서=? WHERE id=?", n, ids[n]);
+                moved = true;
+            });
+            return moved;
+        }
+
         /// <summary>그 해 금액 한 건을 지운다. 잘못 입력한 금액을 되돌릴 때 쓴다.</summary>
         public void DeleteAmount(int 연도, string id)
         {
@@ -553,6 +608,113 @@ namespace PaymentAlert
                 if (c.Run("DELETE FROM amounts WHERE 연도=? AND id=?", 연도, id) > 0 && 출처 != null)
                     기록(연도, id, "금액삭제", null, null, 출처, "지운 금액 " + before);
             });
+        }
+
+        // ── 차입 스케줄 가져오기 ── ADR-0023
+
+        /// <summary>같은 거래처·차입일로 이미 가져온 차입건의 묶음 이름. 없으면 null.</summary>
+        public string 차입묶음(string 거래처, DateTime 차입일)
+        {
+            string g = null;
+            c.Each("SELECT 묶음 FROM loans WHERE 거래처=? AND 차입일=?", delegate(Reader r) { g = r.Str(0); }, 거래처, D(차입일));
+            return g;
+        }
+
+        /// <summary>
+        /// 차입건 하나를 한 트랜잭션으로 넣는다: 차입 정보, 새 회차 항목, 그 회차 금액, 변경 기록.
+        /// 이미 있는 id 는 건드리지 않는다 — 진행 중인 회차를 가져오기가 덮어쓰면 안 된다.
+        /// 새로 넣은 항목 id 를 돌려준다.
+        /// </summary>
+        public List<string> 차입가져오기(string 묶음, LoanPlan plan, List<PaymentItem> items,
+            Dictionary<string, AmountRecord> amounts, string 파일, string 출처)
+        {
+            return 차입가져오기(묶음, plan, items, amounts, 파일, 출처, "가져오기");
+        }
+
+        /// <summary>가져온 차입건 한 줄 (ADR-0023).</summary>
+        public sealed class 차입건
+        {
+            public string 묶음, 거래처, 파일, 시트, 차입명 = "", 약칭 = "";
+            public DateTime 차입일;
+            public DateTime? 만기;
+            public decimal 액면;
+            public decimal? 이율;
+
+            /// <summary>화면의 차입처 자리: 약칭, 없으면 차입명, 그것도 없으면 ERP 거래처.</summary>
+            public string 표시이름 { get { return 차입표시이름(약칭, 차입명, 거래처); } }
+        }
+
+        public static string 차입표시이름(string 약칭, string 차입명, string 거래처)
+        {
+            if (!string.IsNullOrEmpty(약칭) && 약칭.Trim().Length > 0) return 약칭.Trim();
+            if (!string.IsNullOrEmpty(차입명) && 차입명.Trim().Length > 0) return 차입명.Trim();
+            return 거래처 ?? "";
+        }
+
+        public List<차입건> 차입목록()
+        {
+            var list = new List<차입건>();
+            c.Each("SELECT 묶음,거래처,차입일,액면,이율,만기,파일,시트,차입명,약칭 FROM loans ORDER BY 차입일, 거래처", delegate(Reader r)
+            {
+                var x = new 차입건();
+                x.묶음 = r.Str(0); x.거래처 = r.Str(1);
+                x.차입일 = r.Date(2) ?? DateTime.MinValue;
+                x.액면 = r.Dec(3) ?? 0; x.이율 = r.Dec(4); x.만기 = r.Date(5);
+                x.파일 = r.Str(6); x.시트 = r.Str(7);
+                x.차입명 = r.Str(8); x.약칭 = r.Str(9);
+                list.Add(x);
+            });
+            return list;
+        }
+
+        /// <summary>
+        /// 연장 스케줄을 붙이거나 처음 가져올 때 쓴다. 동작 = 변경 기록에 남길 이름 ('가져오기' / '연장').
+        /// 연장이면 차입건의 차입일은 그대로 두고 액면·이율·만기만 새 스케줄 값으로 바꾼다.
+        /// </summary>
+        public List<string> 차입가져오기(string 묶음, LoanPlan plan, List<PaymentItem> items,
+            Dictionary<string, AmountRecord> amounts, string 파일, string 출처, string 동작)
+        {
+            var added = new List<string>();
+            c.Tx(delegate
+            {
+                string now = DT(DateTime.Now);
+                // 차입명은 넣은 것이 있을 때만 바꾼다 (연장 업로드는 이름을 보내지 않는다). 약칭은 차입명과 함께 바뀐다.
+                c.Run("INSERT INTO loans(묶음,거래처,차입일,액면,이율,만기,파일,시트,가져온일시,차입명,약칭) VALUES(?,?,?,?,?,?,?,?,?,?,?) " +
+                      "ON CONFLICT(묶음) DO UPDATE SET 액면=excluded.액면, 이율=excluded.이율, 만기=excluded.만기, " +
+                      "파일=excluded.파일, 시트=excluded.시트, 가져온일시=excluded.가져온일시, " +
+                      "차입명=CASE WHEN excluded.차입명<>'' THEN excluded.차입명 ELSE loans.차입명 END, " +
+                      "약칭=CASE WHEN excluded.차입명<>'' THEN excluded.약칭 ELSE loans.약칭 END",
+                    묶음, plan.거래처, D(plan.차입일), M(plan.액면), M(plan.이율), D(plan.만기), 파일 ?? "", plan.시트 ?? "", now,
+                    (plan.차입명 ?? "").Trim(), (plan.약칭 ?? "").Trim());
+
+                foreach (PaymentItem it in items)
+                {
+                    long 다음순서 = 0;
+                    c.Each("SELECT COALESCE(MAX(순서), -1) + 1 FROM items", delegate(Reader r) { 다음순서 = r.Long(0); });
+                    if (c.Run("INSERT INTO items(" + 항목칸 + ",순서) VALUES(" + 항목자리 + ") ON CONFLICT(id) DO NOTHING",
+                            항목값(it, 다음순서)) == 0)
+                        continue;
+                    added.Add(it.Id);
+
+                    string 내용 = "ERP 차입스케줄 " + (파일 ?? "") + (string.IsNullOrEmpty(plan.시트) ? "" : " · 시트 " + plan.시트);
+                    AmountRecord a;
+                    if (amounts.TryGetValue(it.Id, out a))
+                    {
+                        c.Run("INSERT INTO amounts(연도,id,금액,출처,확인일,비고) VALUES(?,?,?,?,?,?) " +
+                              "ON CONFLICT(연도,id) DO UPDATE SET 금액=excluded.금액, 출처=excluded.출처, " +
+                              "확인일=excluded.확인일, 비고=excluded.비고",
+                            a.연도, a.Id, M(a.금액), a.출처 ?? "", D(a.확인일), a.비고 ?? "");
+                        내용 += " · " + a.금액.ToString("N0", CultureInfo.InvariantCulture) + "원";
+                        기록(a.연도, it.Id, 동작, null, null, 출처, 내용);
+                    }
+                    else if (it.시작연도.HasValue)
+                    {
+                        기록(it.시작연도.Value, it.Id, 동작, null, null, 출처, 내용);
+                    }
+                }
+                if (added.Count > 0) SetMeta("master_updated_at", now);
+            });
+            return added;
         }
 
         // ── 추적 시작일 ──
@@ -698,7 +860,7 @@ namespace PaymentAlert
                 확인(st, 기대단계);
                 int last = 단계들.Length - 1;
                 if (st.단계 >= last)
-                    throw new StageConflictException("이미 마지막 단계까지 끝난 건입니다.", st.단계);
+                    throw new StageConflictException("이미 마지막 단계까지 완료된 건입니다.", st.단계);
                 int before = st.단계;
                 st.단계 = before + 1;
                 st.변경일시 = 지금;

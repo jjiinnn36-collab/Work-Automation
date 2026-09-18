@@ -39,6 +39,21 @@ export function stepStates(stage: number, count: number, done: boolean): StepSta
   return out
 }
 
+/**
+ * 화면에 그리는 지점. hideStart(신고 후 납부)면 시작점(0번)을 빼고, 끝낸 지점 번호도 하나 당긴다 (-1 = 아무것도 안 함).
+ */
+export function visibleSteps(o: { stages: string[]; stage: number; hideStart?: boolean }): { names: string[]; stage: number } {
+  if (!o.hideStart || o.stages.length < 2) return { names: o.stages, stage: o.stage }
+  return { names: o.stages.slice(1), stage: o.stage - 1 }
+}
+
+/** 카드의 진행 한 줄: "1/3 신고 완료". 시작점을 숨긴 흐름에서 아직 아무것도 안 했으면 "0/3 진행 전". */
+export function progressText(o: { stages: string[]; stage: number; stageName: string; hideStart?: boolean; done?: boolean }): string {
+  const { names, stage } = visibleSteps(o)
+  if (stage < 0) return `0/${names.length} 진행 전`
+  return `${stage + 1}/${names.length} ${o.stageName} 완료`
+}
+
 /** 말풍선 문구 (AC-W48, W75a): "2/4 신고 · 진행중" */
 export function stepTooltip(names: string[], i: number, state: StepState): string {
   const word = state === "past" ? "완료" : state === "current" ? "진행중" : "진행예정"
@@ -203,9 +218,9 @@ export function eventSummary(e: { action: string; from: string | null; to: strin
 
 /** 진행흐름 선택 카드: 저장 값은 그대로, 보이는 이름만 쉬운 말로. */
 export const FLOW_CARDS: { flow: "신고납부" | "납부만" | "제출만" | "사용자설정"; label: string; steps: string }[] = [
-  { flow: "신고납부", label: "신고 후 납부", steps: "신고서 작성 → 신고 → 전표 → 납부" },
-  { flow: "납부만", label: "납부만", steps: "고지서 → 전표 → 납부" },
-  { flow: "제출만", label: "제출만", steps: "자료 작성 → 제출 · 금액 없음" },
+  { flow: "신고납부", label: "신고 후 납부", steps: "신고 → 전표발행 → 납부" },
+  { flow: "납부만", label: "납부만", steps: "고지서수령 → 전표발행 → 납부" },
+  { flow: "제출만", label: "제출만", steps: "제출자료 작성 → 제출 · 금액 없음" },
   { flow: "사용자설정", label: "직접 정하기", steps: "단계 수와 이름을 정함" },
 ]
 
@@ -314,4 +329,83 @@ export function overwriteConfirm(changes: { label: string; from: number; to: num
     action: "바꾸기",
     destructive: false,
   }
+}
+
+// ── 차입 스케줄 가져오기 (ADR-0023) ──
+
+/** 항목 유효연도 표시. 제한이 없으면 빈 문자열. */
+export function yearRange(start: number | null | undefined, end: number | null | undefined): string {
+  const s = start ?? null
+  const e = end ?? null
+  if (s === null && e === null) return ""
+  if (s !== null && e !== null) return s === e ? `${s}년만` : `${s}~${e}년`
+  return s !== null ? `${s}년부터` : `${e}년까지`
+}
+
+/** 파일 + 시트로 차입건을 가리킨다. 파일 이름에는 | 를 쓸 수 없어 둘이 섞이지 않는다. */
+export function loanKey(file: string, sheet: string): string {
+  return `${file}|${sheet}`
+}
+
+type LoanLike = { sheet: string; ok: boolean; newCount?: number }
+
+/** 처음 고를 차입건: 읽혔고 새로 넣을 회차가 있는 시트. */
+export function loanDefaultKeys(files: { file: string; loans: LoanLike[] }[]): string[] {
+  const keys: string[] = []
+  for (const f of files) for (const l of f.loans) if (l.ok && (l.newCount ?? 0) > 0) keys.push(loanKey(f.file, l.sheet))
+  return keys
+}
+
+/** 한 파일에서 저장할 시트: 고른 것 중 새 회차가 있는 것. 비면 그 파일은 보내지 않는다. */
+export function loanSaveSheets(file: string, loans: LoanLike[], selected: string[]): string[] {
+  return loans.filter((l) => l.ok && (l.newCount ?? 0) > 0 && selected.includes(loanKey(file, l.sheet))).map((l) => l.sheet)
+}
+
+/**
+ * 등록 전에 고친 지급액 → 서버에 보낼 ov 값("지급일|금액|시트").
+ * 새로 넣을 회차만, 스케줄 금액과 다를 때만 보낸다. 숫자가 아닌 칸은 invalid 로 돌려준다(지급일).
+ */
+export function loanOverrides(
+  sheet: string,
+  payments: { scheduled: string; amount: number; state: string }[],
+  typed: Record<string, string>
+): { ov: string[]; invalid: string[] } {
+  const ov: string[] = []
+  const invalid: string[] = []
+  for (const p of payments) {
+    if (p.state !== "new") continue
+    const raw = typed[p.scheduled]
+    if (raw === undefined) continue
+    const v = parseWon(raw)
+    if (v === null) invalid.push(p.scheduled)
+    else if (v !== p.amount) ov.push(`${p.scheduled}|${v}|${sheet}`)
+  }
+  return { ov, invalid }
+}
+
+/** 금액 근거: "9/30 4,660,274 + 12/4 560,959" */
+export function loanBasis(rows: { date: string; amount: number }[]): string {
+  return rows.map((r) => `${Number(r.date.slice(5, 7))}/${Number(r.date.slice(8, 10))} ${won(r.amount)}`).join(" + ")
+}
+
+/** 차입건 이름 입력. 약칭을 비우면 차입명을 쓴다 (사용자 요청 2026-09-18). */
+export type LoanName = { name: string; short: string }
+
+/** 저장 요청의 nm 값: 시트|차입명|약칭. 차입명이 빈 시트는 missing 으로 돌려준다. */
+export function loanNameParams(
+  sheets: string[],
+  names: Record<string, LoanName | undefined>
+): { nm: string[]; missing: string[] } {
+  const nm: string[] = []
+  const missing: string[] = []
+  for (const sheet of sheets) {
+    const n = names[sheet]
+    const name = (n?.name ?? "").trim()
+    if (!name) {
+      missing.push(sheet)
+      continue
+    }
+    nm.push(`${sheet}|${name}|${(n?.short ?? "").trim()}`)
+  }
+  return { nm, missing }
 }

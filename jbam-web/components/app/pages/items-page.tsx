@@ -1,13 +1,18 @@
 "use client"
 
-import { ArrowDownIcon, ArrowUpIcon, ExternalLinkIcon, InfoIcon, LayersIcon, MoreHorizontalIcon, PencilIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import * as React from "react"
+import {
+  InfoIcon, LayersIcon, MenuIcon, MoreHorizontalIcon, PencilIcon, PlusIcon, Trash2Icon, UploadIcon,
+} from "lucide-react"
 
 import { errorMessage, get, post } from "@/lib/api"
-import { safeUrl, won } from "@/lib/logic"
+import { won, yearRange } from "@/lib/logic"
 import type { Item, ItemsData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
+import { useRowDrag } from "@/hooks/use-row-drag"
 import { useApp } from "@/components/app/app-context"
-import { LoadError, PageHeader } from "@/components/app/parts"
+import { LoanImportDialog, type LoanExtendTarget } from "@/components/app/dialogs/loan-import-dialog"
+import { LoadError, None, OrgName, PageHeader } from "@/components/app/parts"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -23,20 +28,33 @@ import { toast } from "@/components/ui/toast"
 export function ItemsPage() {
   const app = useApp()
   const { data, error } = useLoad(() => get<ItemsData>("/api/items"), [app.version])
+  const [extend, setExtend] = React.useState<LoanExtendTarget | null>(null)
+  // 끌어 옮긴 순서를 서버 응답 전에 먼저 보여 준다. 새 목록이 오면 버린다.
+  const [order, setOrder] = React.useState<string[] | null>(null)
+  React.useEffect(() => setOrder(null), [data])
+
+  const byId = new Map((data?.items ?? []).map((it) => [it.id, it]))
+  const items: Item[] = order
+    ? order.map((id) => byId.get(id)).filter((it): it is Item => it !== undefined)
+    : (data?.items ?? [])
+
+  const drag = useRowDrag(items.length, (from, to) => {
+    const ids = items.map((it) => it.id)
+    const [moved] = ids.splice(from, 1)
+    ids.splice(to, 0, moved)
+    setOrder(ids)
+    post("/api/item/move", { id: moved, to })
+      .catch((e) => {
+        setOrder(null)
+        toast.add({ title: "순서를 옮기지 못했습니다", description: errorMessage(e), type: "error" })
+      })
+      .finally(() => app.refresh())
+  })
 
   if (error && !data) return <LoadError message={error} />
   if (!data) return <Skeleton className="h-96 rounded-xl" />
 
   const year = data.today.slice(0, 4)
-
-  async function move(it: Item, dir: "up" | "down") {
-    try {
-      await post("/api/item/move", { id: it.id, dir })
-      app.refresh()
-    } catch (e) {
-      toast.add({ title: "순서를 옮기지 못했습니다", description: errorMessage(e), type: "error" })
-    }
-  }
 
   async function remove(it: Item) {
     const yes = await app.confirm({
@@ -68,17 +86,20 @@ export function ItemsPage() {
       />
       <Alert>
         <InfoIcon />
-        <AlertTitle>항목 관리에서 하는 일</AlertTitle>
+        <AlertTitle>항목 관리</AlertTitle>
         <AlertDescription>
-          <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
-            <li>기관 · 비용명 · 기한 · 진행흐름을 정합니다.</li>
-            <li>
-              그 해 실제 금액은 <b>이번 달</b>·<b>연간</b> 화면에서 금액을 눌러 넣고, 아래 <b>{year}년 금액</b> 칸에서 확인합니다.
-            </li>
-            <li>
-              분할납부는 항목 추가의 기한 월에 <code className="rounded bg-muted px-1">5,6,7</code> 처럼 쉼표로 넣습니다.
-            </li>
-          </ul>
+          <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+            <dt className="font-medium text-foreground">일반 비용</dt>
+            <dd>매년 돌아오는 기한을 등록</dd>
+            <dt className="font-medium text-foreground">차입금 이자</dt>
+            <dd>ERP 스케줄 파일로 등록</dd>
+            <dt className="font-medium text-foreground">금액</dt>
+            <dd>이번 달 · 연간 화면에서 입력</dd>
+            <dt className="font-medium text-foreground">만기 연장</dt>
+            <dd>
+              <kbd className="rounded border bg-background px-1 text-xs">⋯</kbd> → 연장스케줄 업로드
+            </dd>
+          </dl>
         </AlertDescription>
       </Alert>
 
@@ -97,44 +118,27 @@ export function ItemsPage() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead className="w-16 pl-4">순서</TableHead>
-                <TableHead>기관</TableHead>
+                <TableHead className="pl-4">기관</TableHead>
                 <TableHead>비용명</TableHead>
                 <TableHead>흐름</TableHead>
                 <TableHead>기한</TableHead>
                 <TableHead>알림</TableHead>
                 <TableHead>금액규칙</TableHead>
                 <TableHead className="text-right">{year}년 금액</TableHead>
-                <TableHead>홈페이지</TableHead>
                 <TableHead>비고</TableHead>
-                <TableHead className="w-10 pr-4" />
+                <TableHead className="w-10" />
+                <TableHead className="w-10 pr-3"><span className="sr-only">순서</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.items.map((it, i) => {
-                const url = it.siteUrl ? safeUrl(it.siteUrl) : null
+              {items.map((it, i) => {
                 return (
-                  <TableRow key={it.id}>
-                    <TableCell className="pl-4">
-                      <div className="flex">
-                        <Button variant="ghost" size="icon-xs" aria-label="위로" disabled={i === 0} onClick={() => move(it, "up")}>
-                          <ArrowUpIcon />
-                        </Button>
-                        <Button variant="ghost" size="icon-xs" aria-label="아래로" disabled={i === data.items.length - 1} onClick={() => move(it, "down")}>
-                          <ArrowDownIcon />
-                        </Button>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">{it.org}</TableCell>
+                  <TableRow key={it.id} {...drag.rowProps(i)} className="data-[dragging]:bg-background data-[dragging]:shadow-lg">
+                    <TableCell className="pl-4 text-muted-foreground"><OrgName o={it} /></TableCell>
                     <TableCell>
                       <button type="button" className="text-left font-medium hover:underline" onClick={() => app.openItem(it)}>
                         {it.name}
                       </button>
-                      {it.group && (
-                        <Badge variant="outline" className="ml-1.5">
-                          <LayersIcon /> {it.group}
-                        </Badge>
-                      )}
                     </TableCell>
                     <TableCell>
                       {it.flow === "사용자설정" ? (
@@ -145,27 +149,23 @@ export function ItemsPage() {
                         it.flow
                       )}
                     </TableCell>
-                    <TableCell className="tabular-nums">{it.month}월 {it.day === "말일" ? "말일" : `${it.day}일`}</TableCell>
-                    <TableCell className="tabular-nums">{it.lead}영업일</TableCell>
-                    <TableCell>
-                      {!it.paid ? <span className="text-muted-foreground">—</span> : <Badge variant={it.rule === "고정" ? "outline" : "secondary"}>{it.rule}</Badge>}
-                    </TableCell>
-                    <TableCell className="text-right tabular-nums">
-                      {it.thisYearAmount !== null ? won(it.thisYearAmount) : it.thisYearUnknown ? <span className="font-medium text-action">미확인</span> : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      {url ? (
-                        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sm underline-offset-4 hover:underline">
-                          {it.siteName || "홈페이지"} <ExternalLinkIcon className="size-3" />
-                        </a>
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
+                    <TableCell className="tabular-nums">
+                      {it.month}월 {it.day === "말일" ? "말일" : `${it.day}일`}
+                      {!it.loan && yearRange(it.startYear, it.endYear) && (
+                        <span className="ml-1 text-xs text-muted-foreground">· {yearRange(it.startYear, it.endYear)}</span>
                       )}
                     </TableCell>
-                    <TableCell className="max-w-48 truncate text-muted-foreground" title={it.memo}>{it.memo}</TableCell>
-                    <TableCell className="pr-4">
+                    <TableCell className="tabular-nums">{it.lead}영업일</TableCell>
+                    <TableCell>
+                      {!it.paid ? <None>해당 없음</None> : <Badge variant={it.rule === "고정" ? "outline" : "secondary"}>{it.rule}</Badge>}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      {it.thisYearAmount !== null ? won(it.thisYearAmount) : it.thisYearUnknown ? <span className="font-medium text-action">미확인</span> : <None>{it.paid ? "없음" : "해당 없음"}</None>}
+                    </TableCell>
+                    <TableCell className="max-w-56 truncate text-xs text-muted-foreground tabular-nums" title={it.memo}>{it.memo || <None />}</TableCell>
+                    <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`${it.name} 동작`} />}>
+                        <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`${it.name} 더보기`} />}>
                           <MoreHorizontalIcon />
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-44">
@@ -173,8 +173,13 @@ export function ItemsPage() {
                             <PencilIcon /> 수정
                           </DropdownMenuItem>
                           {it.group && (
-                            <DropdownMenuItem onClick={() => app.openGroup(Number(year), it.group)}>
+                            <DropdownMenuItem onClick={() => app.openGroup(it.startYear ?? Number(year), it.group)}>
                               <LayersIcon /> 회차 금액
+                            </DropdownMenuItem>
+                          )}
+                          {it.loan && it.group && (
+                            <DropdownMenuItem onClick={() => setExtend({ group: it.group, org: it.org })}>
+                              <UploadIcon /> 연장스케줄 업로드
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
@@ -184,6 +189,17 @@ export function ItemsPage() {
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
+                    <TableCell className="pr-3">
+                      <button
+                        type="button"
+                        {...drag.handleProps(i)}
+                        aria-label={`${it.name} 순서 옮기기 — 끌거나 ↑·↓ 키`}
+                        title="끌어서 순서 바꾸기"
+                        className="flex size-7 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 active:cursor-grabbing"
+                      >
+                        <MenuIcon className="size-4" />
+                      </button>
+                    </TableCell>
                   </TableRow>
                 )
               })}
@@ -191,6 +207,7 @@ export function ItemsPage() {
           </Table>
         </div>
       )}
+      <LoanImportDialog open={extend !== null} onOpenChange={(v) => !v && setExtend(null)} extend={extend} />
     </div>
   )
 }

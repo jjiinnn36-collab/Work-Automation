@@ -6,6 +6,7 @@ import {
   won, md, parseWon, stepStates, stepTooltip, yearStatus, sortRemaining, matchYearFilter,
   shiftMonth, presetRange, parseMonths, groupSum, previewKind, csvCell, toCsv, safeUrl,
   viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary, settingsConfirm, discardConfirm, amountOverwrite, groupOverwrites, overwriteConfirm,
+  yearRange, loanKey, loanDefaultKeys, loanSaveSheets, loanBasis, loanOverrides, loanNameParams, visibleSteps, progressText,
 } from "./logic.ts"
 import type { Occurrence } from "./types.ts"
 
@@ -189,4 +190,57 @@ test("입력 중 닫기·금액 덮어쓰기 확인 (ADR-0022)", () => {
   const many = overwriteConfirm(Array.from({ length: 7 }, (_, i) => ({ label: `${i + 1}월`, from: 1, to: 2 })))
   assert.equal(many.title, "이미 넣은 금액 7건을 바꿀까요?")
   assert.match(many.description, / 외 2건$/)
+})
+
+test("차입 스케줄 가져오기: 유효연도 표시·기본 선택·근거 (ADR-0023)", () => {
+  assert.equal(yearRange(null, null), "")
+  assert.equal(yearRange(2026, 2026), "2026년만")
+  assert.equal(yearRange(2026, 2028), "2026~2028년")
+  assert.equal(yearRange(2027, null), "2027년부터")
+  assert.equal(yearRange(undefined, 2028), "2028년까지")
+
+  const a = [
+    { sheet: "차입처A", ok: true, newCount: 4 },
+    { sheet: "이미 넣음", ok: true, newCount: 0 },
+    { sheet: "오류", ok: false },
+  ]
+  const b = [{ sheet: "차입처A", ok: true, newCount: 1 }]
+  const keys = loanDefaultKeys([{ file: "a.xlsx", loans: a }, { file: "b.csv", loans: b }])
+  assert.deepEqual(keys, [loanKey("a.xlsx", "차입처A"), loanKey("b.csv", "차입처A")])
+  assert.notEqual(loanKey("a.xlsx", "차입처A"), loanKey("b.csv", "차입처A"))
+  assert.deepEqual(loanSaveSheets("a.xlsx", a, keys), ["차입처A"])
+  assert.deepEqual(loanSaveSheets("a.xlsx", a, [loanKey("a.xlsx", "이미 넣음")]), [])
+  assert.deepEqual(loanSaveSheets("b.csv", b, [loanKey("a.xlsx", "차입처A")]), [])
+
+  assert.equal(loanBasis([{ date: "2026-09-30", amount: 4660274 }, { date: "2026-12-04", amount: 560959 }]), "9/30 4,660,274 + 12/4 560,959")
+
+  const pays = [
+    { scheduled: "2026-12-04", amount: 15750000, state: "new" },
+    { scheduled: "2027-03-04", amount: 15750000, state: "new" },
+    { scheduled: "2027-06-04", amount: 15750000, state: "exists" },
+    { scheduled: "2027-09-03", amount: 15750000, state: "new" },
+  ]
+  assert.deepEqual(
+    loanOverrides("차입처A", pays, { "2026-12-04": "15,750,000", "2027-03-04": "15,750,001원", "2027-06-04": "1", "2027-09-03": "abc" }),
+    { ov: ["2027-03-04|15750001|차입처A"], invalid: ["2027-09-03"] }
+  )
+  assert.deepEqual(loanOverrides("x", pays, {}), { ov: [], invalid: [] })
+})
+
+test("차입명·약칭: 시트|차입명|약칭, 차입명이 비면 등록 못 함", () => {
+  assert.deepEqual(
+    loanNameParams(["A", "B", "C"], { A: { name: " 가짜 차입 ", short: "가짜PF" }, B: { name: "가짜B", short: " " }, C: { name: "  ", short: "C" } }),
+    { nm: ["A|가짜 차입|가짜PF", "B|가짜B|"], missing: ["C"] }
+  )
+  assert.deepEqual(loanNameParams(["X"], {}), { nm: [], missing: ["X"] })
+})
+
+test("신고 후 납부는 시작점을 그리지 않는다 (hideStart)", () => {
+  const 신고 = { stages: ["신고 전", "신고", "전표발행", "납부"], hideStart: true }
+  assert.deepEqual(visibleSteps({ ...신고, stage: 0 }), { names: ["신고", "전표발행", "납부"], stage: -1 })
+  assert.equal(progressText({ ...신고, stage: 0, stageName: "신고 전" }), "0/3 진행 전")
+  assert.equal(progressText({ ...신고, stage: 1, stageName: "신고" }), "1/3 신고 완료")
+  const 납부 = { stages: ["고지서수령", "전표발행", "납부"], stage: 0, stageName: "고지서수령" }
+  assert.deepEqual(visibleSteps(납부).names, ["고지서수령", "전표발행", "납부"])
+  assert.equal(progressText(납부), "1/3 고지서수령 완료")
 })

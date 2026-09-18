@@ -105,7 +105,10 @@ export default function Page() {
       if (kind === "revert") {
         const yes = await confirm({
           title: "한 단계 되돌릴까요?",
-          description: `${o.name} (${o.year}년) — '${o.stages[o.stage]}' 를 취소하고 '${o.stages[o.stage - 1]}' 까지 끝난 것으로 돌립니다. 오늘 확인 표시도 지워져 알림 팝업이 다시 묻습니다.`,
+          description:
+            o.hideStart && o.stage === 1
+              ? `${o.name} (${o.year}년) — '${o.stages[1]}' 를 취소합니다. 오늘 확인 표시도 지워져 알림 팝업이 다시 묻습니다.`
+              : `${o.name} (${o.year}년) — '${o.stages[o.stage]}' 를 취소하고 '${o.stages[o.stage - 1]}' 까지 완료된 것으로 돌립니다. 오늘 확인 표시도 지워져 알림 팝업이 다시 묻습니다.`,
           action: "되돌리기",
           destructive: true,
         })
@@ -116,7 +119,7 @@ export default function Page() {
       try {
         await post(path, { y: o.year, id: o.id, stage: o.stage })
         const title =
-          kind === "advance" ? `${o.name} · ${o.nextStage} 끝남`
+          kind === "advance" ? `${o.name} · ${o.nextStage} 완료`
           : kind === "defer" ? `${o.name} · 오늘은 대기`
           : kind === "undefer" ? `${o.name} · 대기를 취소했습니다`
           : `${o.name} · 되돌렸습니다`

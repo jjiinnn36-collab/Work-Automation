@@ -59,6 +59,9 @@ namespace PaymentAlert
             {
                 foreach (PaymentItem item in items)
                 {
+                    // 유효연도 밖의 해에는 기한이 없다 (ADR-0023). 팝업·웹·보드가 모두 여기를 거친다.
+                    if (!item.해당연도(year)) continue;
+
                     var occ = new Occurrence();
                     occ.Item = item;
                     occ.연도 = year;

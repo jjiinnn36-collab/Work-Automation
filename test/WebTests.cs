@@ -12,11 +12,12 @@ namespace PaymentAlert.Tests
     /// 웹 화면 서버 시험. 임시 자료 폴더에 DB 를 만들고 실제 HTTP 로 두드린다.
     /// 오늘은 2026-09-17(목)로 고정한다.
     /// </summary>
-    static class WebTests
+    static partial class WebTests
     {
         static int passed = 0, failed = 0;
         static string Base;
         static string DataDir;
+        static WebServer Server;   // 시험 중에 바꿔 끼울 연결부 (폴더 선택 창 등)
         static readonly List<string> 팝업요청 = new List<string>();
 
         static void Check(string name, object actual, object expected)
@@ -168,6 +169,7 @@ namespace PaymentAlert.Tests
                 자료만들기();
                 server = new WebServer(DataDir, webRoot, delegate { return new DateTime(2026, 9, 17); });
                 server.팝업요청 = delegate(string id) { 팝업요청.Add(id); };
+                Server = server;
                 server.Start(38600);
                 Base = server.Url;
 
@@ -189,6 +191,7 @@ namespace PaymentAlert.Tests
                 대기취소();
                 문서와순서와기록(server);
                 느린요청중병렬응답(server);
+                차입스케줄가져오기();
             }
             catch (Exception ex)
             {
@@ -273,7 +276,7 @@ namespace PaymentAlert.Tests
             Has("보정 기한", r.Text, "\"payDue\":\"2026-09-21\"");
             Has("금액 문구", r.Text, "\"amountText\":\"1,234,560원\"");
             Has("다음 지점", r.Text, "\"nextStage\":\"전표발행\"");
-            Has("다음 행동 (AC-W50)", r.Text, "\"nextAction\":\"전표 발행\"");
+            Has("다음 행동 (AC-W50)", r.Text, "\"nextAction\":\"전표발행\"");
             Has("남은 건수 1", r.Text, "\"pending\":1");
             Has("알림 전 2건", r.Text, "\"notYet\":2");
             Lacks("알림일 전인 부가세는 없음", r.Text, "\"id\":\"vat-q3\"");
@@ -586,6 +589,18 @@ namespace PaymentAlert.Tests
             Check("https 주소 저장", r.Status, 200);
             Has("주소 정규화", r.Text, "\"siteUrl\":\"https://hometax.go.kr/\"");
             Has("이름 저장", Get("/api/items").Text, "\"siteName\":\"홈택스\"");
+
+            // 같은 기관이면 한 건에만 주소를 넣어도 모두 아이콘이 붙는다 (사용자 요청 2026-09-18).
+            Check("같은 기관 두 번째 항목", Post("/api/item", "mode=new&id=r2&flow=" + E("납부만") + "&rule=" + E("변동") + "&org=" + E("기관") + "&name=" + E("두번째") + "&month=4&day=10").Status, 200);
+            string list = Get("/api/items").Text;
+            int at2 = list.IndexOf("\"id\":\"r2\"", StringComparison.Ordinal);
+            string r2 = at2 >= 0 ? list.Substring(at2, Math.Min(1500, list.Length - at2)) : "";
+            Has("제 주소는 비어 있음", r2, "\"siteUrl\":\"\"");
+            Has("같은 기관 주소를 이어받음", r2, "\"orgSiteUrl\":\"https://hometax.go.kr/\",\"orgSiteName\":\"홈택스\"");
+            Has("이번 달·연간 줄에도", Get("/api/year?y=2026").Text, "\"id\":\"r2\"");
+            string yr = Get("/api/year?y=2026").Text; int at3 = yr.IndexOf("\"id\":\"r2\"", StringComparison.Ordinal);
+            Has("연간 줄에 같은 기관 주소", at3 >= 0 ? yr.Substring(at3, Math.Min(3000, yr.Length - at3)) : "", "\"orgSiteUrl\":\"https://hometax.go.kr/\"");
+            Post("/api/item/delete", "id=r2");
             r = Post("/api/item", "mode=edit&id=r1&flow=" + E("납부만") + 공통 + "&siteUrl=" + E("https://example.com/a"));
             Has("이름 없이 주소만 넣으면 '홈페이지'", r.Text, "\"siteName\":\"홈페이지\"");
             Post("/api/item/delete", "id=r1");
@@ -643,6 +658,27 @@ namespace PaymentAlert.Tests
             Has("취소 뒤 deferredToday 아님", r.Text, "\"deferredToday\":false");
             CheckTrue("DB 에서도 확인 표시 지움", !상태("udf").최종확인일.HasValue);
             Check("두 번 취소는 409", Post("/api/undefer", "y=2026&id=udf&stage=0").Status, 409);
+
+            // 받은 알림 화면만 따로: 알림일이 지난 건을 대기하면 그 카드에 대기 취소가 보여야 한다.
+            Check("알림 중인 시험 항목", Post("/api/item", "mode=new&id=udf2&flow=" + E("납부만") + "&org=a&name=" + E("대기시험") + "&month=9&day=25&lead=10").Status, 200);
+            Has("처음엔 받은 알림에 대기 안 함", Get("/api/alerts").Text, "\"id\":\"udf2\"");
+            Check("받은 알림에서 대기", Post("/api/defer", "y=2026&id=udf2&stage=0").Status, 200);
+            string alerts = Get("/api/alerts").Text;
+            int at = alerts.IndexOf("\"id\":\"udf2\"", StringComparison.Ordinal);
+            CheckTrue("대기한 카드가 받은 알림에 남음", at >= 0);
+            string card = at >= 0 ? alerts.Substring(at, Math.Min(2000, alerts.Length - at)) : "";
+            Has("받은 알림 카드에 대기 취소 (deferredToday)", card, "\"deferredToday\":true");
+            Check("받은 알림에서 대기 취소", Post("/api/undefer", "y=2026&id=udf2&stage=0").Status, 200);
+            alerts = Get("/api/alerts").Text;
+            at = alerts.IndexOf("\"id\":\"udf2\"", StringComparison.Ordinal);
+            card = at >= 0 ? alerts.Substring(at, Math.Min(2000, alerts.Length - at)) : "";
+            Has("취소하면 다시 처리할 건", card, "\"confirmedToday\":false");
+            Post("/api/advance", "y=2026&id=udf2&stage=0");
+            alerts = Get("/api/alerts").Text;
+            at = alerts.IndexOf("\"id\":\"udf2\"", StringComparison.Ordinal);
+            card = at >= 0 ? alerts.Substring(at, Math.Min(2000, alerts.Length - at)) : "";
+            Has("진행한 건에는 대기 취소 없음", card, "\"deferredToday\":false");
+            Post("/api/item/delete", "id=udf2");
             Check("단계가 다르면 409", Post("/api/undefer", "y=2026&id=udf&stage=1").Status, 409);
             Post("/api/advance", "y=2026&id=udf&stage=0");
             r = Post("/api/undefer", "y=2026&id=udf&stage=1");
@@ -710,6 +746,35 @@ namespace PaymentAlert.Tests
             Has("수동 사본 이름", r.Text, "납부알림-수동-");
             Has("목록에 보임", Get("/api/settings").Text, "납부알림-수동-");
             Has("받은 알림에 경고 칸", Get("/api/alerts").Text, "\"warnings\":[");
+
+            // 백업 위치를 화면에서 바꾼다 — 이 PC 의 폴더만.
+            Has("처음엔 기본 위치", Get("/api/settings").Text, "\"backupDirCustom\":false");
+            Check("상대 경로 400", Post("/api/settings/backup-dir", "dir=" + E("backup")).Status, 400);
+            Check("네트워크 폴더 400", Post("/api/settings/backup-dir", "dir=" + E(@"\\server\share")).Status, 400);
+            Check("OneDrive 폴더 400", Post("/api/settings/backup-dir", "dir=" + E(Path.Combine(DataDir, "OneDrive", "백업"))).Status, 400);
+            Check("웹 화면 폴더 안 400", Post("/api/settings/backup-dir", "dir=" + E(Path.Combine(Path.GetFullPath("web"), "b"))).Status, 400);
+            CheckTrue("거절하면 설정 파일 안 생김", !File.Exists(Path.Combine(DataDir, Backups.설정파일)));
+            string 새폴더 = Path.Combine(DataDir, "다른 백업");
+            r = Post("/api/settings/backup-dir", "dir=" + E(새폴더));
+            Check("내 PC 폴더 200", r.Status, 200);
+            Has("바뀐 위치", r.Text, "\"custom\":true");
+            Has("설정 화면에 새 위치", Get("/api/settings").Text, "\"backupDirCustom\":true");
+            Check("지금 백업은 새 위치로", Post("/api/backup", "").Status, 200);
+            CheckTrue("새 위치에 사본", Directory.GetFiles(새폴더, "납부알림-수동-*.db").Length == 1);
+            // 폴더 선택 창 (시험에서는 창 대신 정해 둔 값을 돌려준다)
+            Check("선택 창이 없는 실행이면 501", Post("/api/settings/backup-dir/pick", "").Status, 501);
+            string 고를폴더 = null;
+            Server.폴더고르기 = delegate(string 제목, string 처음) { return 고를폴더; };
+            r = Post("/api/settings/backup-dir/pick", "");
+            Has("취소하면 그대로", r.Text, "\"cancelled\":true");
+            고를폴더 = Path.Combine(DataDir, "OneDrive", "고름");
+            Check("고른 곳이 막힌 폴더면 400", Post("/api/settings/backup-dir/pick", "").Status, 400);
+            고를폴더 = Path.Combine(DataDir, "고른 백업");
+            r = Post("/api/settings/backup-dir/pick", "");
+            Has("고른 폴더로 바뀜", r.Text, "고른 백업");
+            Server.폴더고르기 = null;
+            Check("빈 값 = 기본 위치로", Post("/api/settings/backup-dir", "dir=").Status, 200);
+            Has("기본 위치로 돌아감", Get("/api/settings").Text, "\"backupDirCustom\":false");
         }
 
         static void 분할납부()
@@ -782,6 +847,16 @@ namespace PaymentAlert.Tests
             Has("위로 옮김", r.Text, "\"moved\":true");
             string items = Get("/api/items").Text;
             CheckTrue("vat-q3 가 fss-10 보다 앞", items.IndexOf("\"id\":\"vat-q3\"") < items.IndexOf("\"id\":\"fss-10\""));
+
+            // 끌어서 옮기기: 위치로 바로
+            Check("위치가 숫자가 아니면 400", Post("/api/item/move", "id=vat-q3&to=x").Status, 400);
+            Has("맨 끝으로", Post("/api/item/move", "id=vat-q3&to=999").Text, "\"moved\":true");
+            items = Get("/api/items").Text;
+            CheckTrue("맨 끝에 있음", items.LastIndexOf("\"id\":\"") == items.IndexOf("\"id\":\"vat-q3\""));
+            Has("맨 앞으로", Post("/api/item/move", "id=vat-q3&to=0").Text, "\"moved\":true");
+            items = Get("/api/items").Text;
+            CheckTrue("맨 앞에 있음", items.IndexOf("\"id\":\"") == items.IndexOf("\"id\":\"vat-q3\""));
+            Has("같은 자리면 안 옮김", Post("/api/item/move", "id=vat-q3&to=0").Text, "\"moved\":false");
 
             r = Get("/api/events?y=2026&id=fss-10");
             Check("한 건 기록 200", r.Status, 200);

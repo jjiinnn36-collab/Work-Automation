@@ -265,7 +265,8 @@ namespace PaymentAlert.Tests
             CheckTrue("상태 글은 'N영업일 지남'", form.상태문구.EndsWith("영업일 지남"));
             Check("지난 건 상태 글만 빨강", form.상태색.ToArgb(), Ui.위험.ToArgb());
             CheckTrue("기한일은 상태 옆 한 줄 (· 9/11)", form.부가문구.StartsWith("· 9/11"));
-            Check("진행 막대는 끝낸 지점/전체", form.막대문구, "1/" + Stages.For(a).Length);
+            // 신고 후 납부는 시작점을 그리지 않아 아무것도 안 했으면 0/3 (사용자 요청 2026-09-18)
+            Check("진행 막대는 끝낸 지점/전체", form.막대문구, (Stages.시작숨김(a) ? "0/" : "1/") + Stages.보이는지점(a).Length);
             Check("머리에는 위치", form.위치문구, "1/3");
             CheckTrue("자료 경고·밀린 건이 없으면 '!' 없음", !form.알림있음);
 

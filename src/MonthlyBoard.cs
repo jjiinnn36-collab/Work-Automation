@@ -85,7 +85,7 @@ namespace PaymentAlert
             foot.TextAlign = ContentAlignment.MiddleLeft;
             foot.Padding = new Padding(10, 0, 0, 0);
             foot.ForeColor = 흐린글씨;
-            foot.Text = "두 번 누르면 증빙 폴더 · 오른쪽 클릭하면 되돌리기";
+            foot.Text = "두 번 누르면 증빙자료 폴더 · 오른쪽 클릭하면 되돌리기";
 
             Controls.Add(listPanel);
             Controls.Add(foot);
@@ -314,7 +314,7 @@ namespace PaymentAlert
             const int 금액폭 = 118;
 
             var 이름 = new Label();
-            이름.Text = o.Item.비용명;
+            이름.Text = o.Item.카드이름;
             이름.Font = new Font("맑은 고딕", 9.75f, done ? FontStyle.Regular : FontStyle.Bold);
             이름.AutoSize = false;
             이름.AutoEllipsis = true;          // 이름이 길면 말줄임. 금액을 밀어내지 않는다.
@@ -369,7 +369,7 @@ namespace PaymentAlert
             p.Controls.Add(금액);
 
             string tip = string.Format("{0} ({1})\n기한 {2}\n{3}",
-                o.Item.비용명, o.Item.기관,
+                o.Item.카드이름, o.Item.기관,
                 o.원기한일.ToString("yyyy-MM-dd (ddd)", ko) + "  → 실납부 " + o.보정기한일.ToString("MM-dd (ddd)", ko),
                 금액확정 ? 금액문구 + "원" : (금액문구.Length == 0 ? "납부 없음" : "금액 미확인"));
             var tt = new ToolTip();
@@ -399,7 +399,7 @@ namespace PaymentAlert
 
             menu.Items.Add(new ToolStripSeparator());
 
-            var 폴더 = new ToolStripMenuItem("증빙 폴더 열기");
+            var 폴더 = new ToolStripMenuItem("증빙자료 폴더 열기");
             폴더.Click += delegate { OpenAttachments(o); };
             menu.Items.Add(폴더);
 
@@ -451,7 +451,7 @@ namespace PaymentAlert
 
                 string 확인문구 = string.Format(
                     "{0} ({1})\r\n기한 {2}\r\n\r\n{3}  →  {4}\r\n\r\n되돌릴까요?",
-                    o.Item.비용명, o.Item.기관,
+                    o.Item.카드이름, o.Item.기관,
                     o.원기한일.ToString("yyyy-MM-dd"),
                     stages[st.단계], stages[이전]);
 

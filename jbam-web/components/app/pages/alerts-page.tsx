@@ -1,14 +1,14 @@
 "use client"
 
-import { BellOffIcon, CalendarClockIcon, TriangleAlertIcon } from "lucide-react"
+import { BellOffIcon, CalendarClockIcon, ClockIcon, TriangleAlertIcon, Undo2Icon } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { get } from "@/lib/api"
-import { won } from "@/lib/logic"
+import { progressText, won } from "@/lib/logic"
 import type { AlertsData, Occurrence } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useApp } from "@/components/app/app-context"
-import { AdvanceButton, AmountButton, DueText, LoadError, PageHeader, RowMenu, SiteOrDocs, StatusBadge } from "@/components/app/parts"
+import { AdvanceButton, AmountButton, DueText, LoadError, OrgName, PageHeader, RowMenu, SiteOrDocs, StatusBadge } from "@/components/app/parts"
 import { NextAction, Steps } from "@/components/app/steps"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -75,7 +75,7 @@ export function AlertsPage() {
         <Card className="ring-destructive/30">
           <CardHeader>
             <CardTitle className="text-destructive">오래 밀린 건</CardTitle>
-            <CardDescription>기한이 지나고 5영업일이 넘은 미처리 {data.overdue.length}건. 매일 묻지는 않지만 끝내야 조용해집니다.</CardDescription>
+            <CardDescription>기한이 지나고 5영업일이 넘은 미처리 {data.overdue.length}건. 매일 묻지는 않지만 완료해야 조용해집니다.</CardDescription>
           </CardHeader>
           <CardContent>
             <Table>
@@ -85,7 +85,7 @@ export function AlertsPage() {
                   <TableHead>항목</TableHead>
                   <TableHead>지금 할 일</TableHead>
                   <TableHead className="text-right">금액</TableHead>
-                  <TableHead className="text-right">동작</TableHead>
+                  <TableHead className="text-right">처리</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -94,10 +94,10 @@ export function AlertsPage() {
                     <TableCell><DueText o={o} /></TableCell>
                     <TableCell>
                       <div className="font-medium">{o.name}</div>
-                      <div className="text-xs text-muted-foreground">{o.year}년 · {o.org} · <span className="text-destructive">{o.statusText}</span></div>
+                      <div className="text-xs text-muted-foreground">{o.year}년 · <OrgName o={o} /> · <span className="text-destructive">{o.statusText}</span></div>
                     </TableCell>
                     <TableCell><NextAction o={o} /></TableCell>
-                    <TableCell className="text-right"><AmountButton o={o} /></TableCell>
+                    <TableCell className="text-right"><AmountButton o={o} readOnly /></TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1.5">
                         <SiteOrDocs o={o} size="xs" />
@@ -128,7 +128,7 @@ function AlertCard({ o }: { o: Occurrence }) {
   return (
     <Card className={cn(overdue && "ring-destructive/40", o.confirmedToday && "opacity-70")}>
       <CardHeader>
-        <CardDescription>{o.org}</CardDescription>
+        <CardDescription><OrgName o={o} /></CardDescription>
         <CardTitle className="text-lg">{o.name}</CardTitle>
         <CardAction><StatusBadge o={o} /></CardAction>
       </CardHeader>
@@ -137,31 +137,28 @@ function AlertCard({ o }: { o: Occurrence }) {
           <span className="text-muted-foreground">
             기한 <DueText o={o} />
           </span>
-          <AmountButton o={o} className="text-base" />
+          <AmountButton o={o} className="text-base" readOnly />
         </div>
         <div className="flex flex-col gap-2">
           <Steps o={o} showLabels />
           <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <span>{o.stage + 1}/{o.stages.length} {o.stageName} 끝남</span>
-            {o.attachments > 0 && <Badge variant="outline">증빙 {o.attachments}</Badge>}
+            <span>{progressText(o)}</span>
           </div>
         </div>
       </CardContent>
       <CardFooter className="flex-wrap gap-2">
         <AdvanceButton o={o} />
-        {o.confirmedToday ? (
-          <>
-            <Badge variant="secondary">오늘 대기함</Badge>
-            {o.deferredToday && (
-              <Button variant="ghost" size="sm" onClick={() => app.act("undefer", o)}>
-                대기 취소
-              </Button>
-            )}
-          </>
-        ) : (
-          <Button variant="outline" size="sm" onClick={() => app.act("defer", o)}>
-            오늘은 대기
+        {/* 누른 자리에서 바로 되돌린다: 오늘은 대기 ↔ 대기 취소 (사용자 요청 2026-09-18). 오늘 진행한 건은 대기 버튼을 두지 않는다. */}
+        {o.deferredToday ? (
+          <Button variant="outline" size="sm" className="min-w-26" onClick={() => app.act("undefer", o)}>
+            <Undo2Icon data-icon="inline-start" /> 대기 취소
           </Button>
+        ) : (
+          !o.confirmedToday && (
+            <Button variant="outline" size="sm" className="min-w-26" onClick={() => app.act("defer", o)}>
+              <ClockIcon data-icon="inline-start" /> 오늘은 대기
+            </Button>
+          )
         )}
         <SiteOrDocs o={o} />
         <div className="ml-auto"><RowMenu o={o} /></div>

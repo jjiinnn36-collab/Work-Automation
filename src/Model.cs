@@ -12,17 +12,21 @@ namespace PaymentAlert
     /// </summary>
     public static class Stages
     {
-        public static readonly string[] 신고납부 = { "신고서 작성", "신고", "전표발행", "납부" };
+        // 신고 후 납부: 신고서 작성과 신고를 '신고' 하나로 (사용자 요청 2026-09-18). 0번은 시작점이라 화면에 보이지 않는다 (시작숨김).
+        public static readonly string[] 신고납부 = { "신고 전", "신고", "전표발행", "납부" };
         public static readonly string[] 납부만 = { "고지서수령", "전표발행", "납부" };
         public static readonly string[] 제출만 = { "제출자료 작성", "제출" };
+        // 차입금 이자: 고지서가 없어 첫 지점은 가져올 때 확인한 지급액. 버튼은 납부만과 같다 (사용자 요청 2026-09-18).
+        public static readonly string[] 차입이자 = { "지급액 확인", "전표발행", "납부" };
 
         // 각 지점에 도달하기 위해 하는 행동. 0 번 지점은 시작 계기라 행동이 없다 (AC-W50).
         // 사용자 요청(2026-09-16): 신고하기 → 신고완료, 납부하기 → 납부완료
-        static readonly string[] 신고납부행동 = { "", "신고완료", "전표 발행", "납부완료" };
-        static readonly string[] 납부만행동 = { "", "전표 발행", "납부완료" };
-        static readonly string[] 제출만행동 = { "", "제출하기" };
+        // 사용자 요청(2026-09-18): 띄어쓰기 없이 명사형으로 맞춤 — 신고완료 · 전표발행 · 납부완료 · 제출
+        static readonly string[] 신고납부행동 = { "", "신고완료", "전표발행", "납부완료" };
+        static readonly string[] 납부만행동 = { "", "전표발행", "납부완료" };
+        static readonly string[] 제출만행동 = { "", "제출" };
 
-        public const string 끝남문구 = "모두 끝났습니다";
+        public const string 끝남문구 = "모두 완료";
 
         /// <summary>사용자설정 흐름인데 단계 정의가 없을 때 쓰는 최소 흐름.</summary>
         public static readonly string[] 사용자기본 = { "시작", "완료" };
@@ -48,10 +52,27 @@ namespace PaymentAlert
         {
             if (it.진행흐름 == Flow.사용자설정 && it.사용자단계 != null && it.사용자단계.Length >= 사용자최소단계)
                 return it.사용자단계;
+            if (it.차입 && it.진행흐름 == Flow.납부만) return 차입이자;
             return For(it.진행흐름);
         }
 
         public static int FinalIndex(PaymentItem it) { return For(it).Length - 1; }
+
+        /// <summary>시작점(0번)을 화면에 보이지 않는 흐름인가 — 신고 후 납부 (사용자 요청 2026-09-18). 단계 번호는 그대로다.</summary>
+        public static bool 시작숨김(PaymentItem it)
+        {
+            return it != null && it.진행흐름 == Flow.신고납부;
+        }
+
+        /// <summary>화면에 그리는 지점: 시작숨김이면 0번을 뺀다.</summary>
+        public static string[] 보이는지점(PaymentItem it)
+        {
+            string[] all = For(it);
+            if (!시작숨김(it) || all.Length < 2) return all;
+            var list = new string[all.Length - 1];
+            Array.Copy(all, 1, list, 0, list.Length);
+            return list;
+        }
 
         /// <summary>
         /// 항목에서 stage 까지 끝냈을 때 지금 누를 행동. 사용자설정은 적어 둔 버튼 문구, 없으면 지점 이름.
@@ -154,7 +175,7 @@ namespace PaymentAlert
         /// </summary>
         public static readonly Dictionary<string, string> 옛이름 = new Dictionary<string, string>
         {
-            { "신고 전", "신고서 작성" }, { "신고완료", "신고" }, { "전표결재", "전표발행" }, { "납부완료", "납부" },
+            { "신고완료", "신고" }, { "전표결재", "전표발행" }, { "납부완료", "납부" },
             { "납부 전", "고지서수령" }, { "제출 전", "제출자료 작성" }, { "제출완료", "제출" }
         };
     }
@@ -228,9 +249,33 @@ namespace PaymentAlert
         /// <summary>사용자설정 흐름에서 돈을 내지 않는 건(제출 등)이면 true.</summary>
         public bool 금액없음;
 
+        /// <summary>
+        /// 이 항목이 기한을 만드는 첫 해·마지막 해 (ADR-0023). null 이면 제한 없음.
+        /// 차입 이자처럼 날짜가 박혀 있고 끝이 있는 일정을 담는다.
+        /// </summary>
+        public int? 시작연도;
+        public int? 종료연도;
+
+        /// <summary>가져온 차입건의 이자 회차인가. 저장하지 않고 읽을 때 loans 표로 정한다 (ADR-0023).</summary>
+        public bool 차입;
+
+        /// <summary>화면에 보이는 이름. 차입 이자 회차는 회차 번호 없이 '차입금 이자' — 웹·팝업·보드 모두 (사용자 요청 2026-09-18).</summary>
+        public string 카드이름
+        {
+            get { return 차입 ? "차입금 이자" : 비용명; }
+        }
+
+        /// <summary>그 해에 기한이 생기는가.</summary>
+        public bool 해당연도(int year)
+        {
+            if (시작연도.HasValue && year < 시작연도.Value) return false;
+            if (종료연도.HasValue && year > 종료연도.Value) return false;
+            return true;
+        }
+
         public string 표시명
         {
-            get { return 비용명 + " (" + 기관 + ")"; }
+            get { return 카드이름 + " (" + 기관 + ")"; }
         }
 
         /// <summary>돈을 내는 건인가. 제출만 흐름, 금액 없음으로 정한 사용자설정 흐름은 금액이 해당 없다.</summary>

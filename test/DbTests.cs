@@ -88,6 +88,7 @@ namespace PaymentAlert.Tests
                 자료준비();
                 사용자설정흐름();
                 대기취소();
+                유효연도와차입가져오기();
             }
             catch (Exception ex)
             {
@@ -672,7 +673,7 @@ namespace PaymentAlert.Tests
 
                 using (Store s = Store.Open(p))
                 {
-                    Check("3판으로", s.버전, 3);
+                    Check("최신 판으로 (3판 이상)", s.버전, Store.스키마버전);
                     List<PaymentItem> m = s.LoadMaster();
                     Check("옛 항목 그대로", m.Count, 2);
                     Check("옛 흐름 그대로", m[0].진행흐름, Flow.신고납부);
@@ -928,6 +929,123 @@ namespace PaymentAlert.Tests
                     got = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "h"; });
                     Check("홈페이지·묶음 왕복", got.홈페이지명 + "|" + got.홈페이지주소 + "|" + got.묶음, "홈택스|https://hometax.go.kr/|vat");
                 }
+            }
+            finally { 치우기(dir); }
+        }
+
+        static void 유효연도와차입가져오기()
+        {
+            Console.WriteLine("\n[DB-22] 4판: 항목 유효연도, 차입 스케줄 가져오기 (ADR-0023)");
+            string dir = 임시폴더("loan");
+            try
+            {
+                string p = Path.Combine(dir, "v3.db");
+                // 3판 파일: 유효연도 칸과 loans 표가 없다.
+                using (Store s = Store.Open(p)) s.UpsertItem(항목("vat", "세무서", "부가세", Flow.신고납부, 1, false, 25, 5, "변동", null));
+                using (var c = new Conn(p))
+                {
+                    c.Run("DROP TABLE loans");
+                    c.Run("DROP TABLE items");
+                    c.Run("CREATE TABLE items(id TEXT PRIMARY KEY, 기관 TEXT NOT NULL, 비용명 TEXT NOT NULL, " +
+                          "진행흐름 TEXT NOT NULL CHECK(진행흐름 IN ('신고납부','납부만','제출만','사용자설정')), 월 INTEGER NOT NULL CHECK(월 BETWEEN 1 AND 12), " +
+                          "말일 INTEGER NOT NULL DEFAULT 0, 일 INTEGER NOT NULL DEFAULT 0, 알림영업일 INTEGER NOT NULL DEFAULT 3, " +
+                          "금액규칙 TEXT NOT NULL DEFAULT '', 고정금액 TEXT, 비고 TEXT NOT NULL DEFAULT '', 순서 INTEGER NOT NULL DEFAULT 0, " +
+                          "홈페이지명 TEXT NOT NULL DEFAULT '', 홈페이지주소 TEXT NOT NULL DEFAULT '', 묶음 TEXT NOT NULL DEFAULT '', " +
+                          "단계정의 TEXT NOT NULL DEFAULT '', 금액없음 INTEGER NOT NULL DEFAULT 0)");
+                    c.Run("INSERT INTO items(id,기관,비용명,진행흐름,월,일,금액규칙,순서) VALUES('vat','세무서','부가세','신고납부',1,25,'변동',0)");
+                    c.Run("UPDATE meta SET value='3' WHERE key='schema_version'");
+                }
+
+                using (Store s = Store.Open(p))
+                {
+                    Check("최신 판으로 (4판 이상)", s.버전, Store.스키마버전);
+                    List<PaymentItem> m = s.LoadMaster();
+                    Check("옛 항목 그대로", m.Count, 1);
+                    CheckTrue("옛 항목은 유효연도 없음 (제한 없음)", !m[0].시작연도.HasValue && !m[0].종료연도.HasValue);
+                    Check("차입건 표가 생김 (빈 표)", s.차입묶음("차입처A", new DateTime(2026, 9, 4)), null);
+
+                    PaymentItem r = 항목("ranged", "기관", "기간 있음", Flow.납부만, 6, false, 30, 3, "변동", null);
+                    r.시작연도 = 2026; r.종료연도 = 2028;
+                    s.UpsertItem(r);
+                    PaymentItem back = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "ranged"; });
+                    Check("유효연도 왕복", back.시작연도 + "~" + back.종료연도, "2026~2028");
+                    r.종료연도 = null;
+                    s.UpsertItem(r);
+                    back = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "ranged"; });
+                    CheckTrue("종료연도 지우기", back.시작연도 == 2026 && !back.종료연도.HasValue);
+
+                    // 차입건 가져오기: 회차 두 개
+                    var plan = new LoanPlan();
+                    plan.시트 = "차입처A"; plan.거래처 = "차입처A"; plan.차입일 = new DateTime(2026, 9, 4);
+                    plan.액면 = 1500000000m; plan.이율 = 4.2m; plan.만기 = new DateTime(2027, 9, 3);
+                    plan.차입명 = "가짜 차입"; plan.약칭 = "가짜PF";
+                    Func<string, int, int, int, PaymentItem> 회차 = delegate(string id, int y, int mo, int d)
+                    {
+                        var it = new PaymentItem();
+                        it.Id = id; it.기관 = "차입처A"; it.비용명 = "차입금 이자"; it.진행흐름 = Flow.사용자설정;
+                        it.사용자단계 = new[] { "지급 예정", "자금요청", "지급전표", "지급완료" };
+                        it.사용자행동 = new[] { "", "자금요청 완료", "전표 발행", "지급완료" };
+                        it.월 = mo; it.일 = d; it.알림영업일 = 5; it.금액규칙 = "변동";
+                        it.시작연도 = y; it.종료연도 = y; it.묶음 = "item-0009";
+                        return it;
+                    };
+                    Func<string, int, decimal, AmountRecord> 금액 = delegate(string id, int y, decimal v)
+                    {
+                        var a = new AmountRecord();
+                        a.연도 = y; a.Id = id; a.금액 = v; a.출처 = "ERP 차입스케줄"; a.확인일 = new DateTime(2026, 9, 17); a.비고 = "근거";
+                        return a;
+                    };
+                    var items = new List<PaymentItem> { 회차("item-0009-202612", 2026, 12, 4), 회차("item-0009-202703", 2027, 3, 4) };
+                    var amounts = new Dictionary<string, AmountRecord> {
+                        { "item-0009-202612", 금액("item-0009-202612", 2026, 15750000m) },
+                        { "item-0009-202703", 금액("item-0009-202703", 2027, 15750000m) } };
+                    List<string> added = s.차입가져오기("item-0009", plan, items, amounts, "스케줄.xlsx", "웹");
+                    Check("회차 2개 들어감", added.Count, 2);
+                    Check("차입건 찾기 (거래처+차입일)", s.차입묶음("차입처A", new DateTime(2026, 9, 4)), "item-0009");
+                    PaymentItem q1 = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "item-0009-202612"; });
+                    Check("회차 유효연도", q1.시작연도 + "~" + q1.종료연도, "2026~2026");
+                    Check("회차 사용자 단계", string.Join("/", Stages.For(q1)), "지급 예정/자금요청/지급전표/지급완료");
+                    CheckTrue("가져온 차입건 회차는 차입 표시", q1.차입);
+                    Check("차입 회차 팝업 제목은 회차 번호 없이", q1.카드이름, "차입금 이자");
+                    PaymentItem vat = s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "vat"; });
+                    CheckTrue("일반 항목은 차입 아님", !vat.차입);
+                    Check("일반 항목 팝업 제목은 비용명", vat.카드이름, "부가세");
+                    Check("회차 금액은 그 해 연도별 금액", s.LoadAmounts()["2027\titem-0009-202703"].금액, 15750000m);
+                    Check("가져오기 기록", s.LoadEvents(2026, "item-0009-202612")[0].동작, "가져오기");
+                    Check("차입명·약칭 저장 (5판)", s.차입목록()[0].차입명 + "/" + s.차입목록()[0].약칭, "가짜 차입/가짜PF");
+                    Check("표시 이름은 약칭", s.차입목록()[0].표시이름, "가짜PF");
+                    Check("약칭이 없으면 차입명", Store.차입표시이름(" ", "가짜 차입", "차입처A"), "가짜 차입");
+                    Check("둘 다 없으면 ERP 거래처", Store.차입표시이름("", "", "차입처A"), "차입처A");
+                    CheckTrue("기록에 파일 이름", s.LoadEvents(2026, "item-0009-202612")[0].내용.Contains("스케줄.xlsx"));
+
+                    // 1회차를 진행해 둔 뒤 다시 가져오면: 있던 회차는 건드리지 않고 새 회차만 넣는다.
+                    s.Advance(2026, "item-0009-202612", Stages.For(q1), 0, DateTime.Now, new DateTime(2026, 11, 27), "웹");
+                    items.Add(회차("item-0009-202706", 2027, 6, 4));
+                    amounts["item-0009-202612"] = 금액("item-0009-202612", 2026, 99m);
+                    amounts["item-0009-202706"] = 금액("item-0009-202706", 2027, 15750000m);
+                    plan.이율 = 4.5m;
+                    plan.차입명 = ""; plan.약칭 = "";   // 연장처럼 이름을 보내지 않으면 있던 이름을 지킨다
+                    added = s.차입가져오기("item-0009", plan, items, amounts, "스케줄2.xlsx", "웹");
+                    Check("다시 가져오면 새 회차만", string.Join(",", added.ToArray()), "item-0009-202706");
+                    Check("있던 회차 진행 그대로", s.LoadStatus(2026, "item-0009-202612").단계, 1);
+                    Check("있던 회차 금액 그대로 (덮어쓰지 않음)", s.LoadAmounts()["2026\titem-0009-202612"].금액, 15750000m);
+                    Check("같은 차입건은 한 줄 (이율 갱신)", s.차입묶음("차입처A", new DateTime(2026, 9, 4)), "item-0009");
+                    Check("이름을 안 보내면 있던 차입명·약칭 유지", s.차입목록()[0].차입명 + "/" + s.차입목록()[0].약칭, "가짜 차입/가짜PF");
+                    Check("회차 3개", s.LoadMaster().FindAll(delegate(PaymentItem x) { return x.묶음 == "item-0009"; }).Count, 3);
+
+                    // 한 트랜잭션: 중간에 실패하면 아무것도 남지 않는다.
+                    var bad = new List<PaymentItem> { 회차("item-0010-202612", 2026, 12, 4), 회차("item-0010-202703", 2027, 3, 4) };
+                    bad[1].월 = 13;   // CHECK 위반
+                    var plan2 = new LoanPlan();
+                    plan2.거래처 = "차입처B"; plan2.차입일 = new DateTime(2026, 10, 16); plan2.액면 = 1m;
+                    bool 실패 = false;
+                    try { s.차입가져오기("item-0010", plan2, bad, new Dictionary<string, AmountRecord>(), "b.csv", "웹"); }
+                    catch (Exception) { 실패 = true; }
+                    CheckTrue("잘못된 회차면 실패", 실패);
+                    Check("실패하면 차입건도 남지 않음", s.차입묶음("차입처B", new DateTime(2026, 10, 16)), null);
+                    CheckTrue("실패하면 회차도 남지 않음", s.LoadMaster().Find(delegate(PaymentItem x) { return x.Id == "item-0010-202612"; }) == null);
+                }
+                Check("이관 전 사본", Directory.GetFiles(Path.Combine(dir, "backups"), "납부알림-v3-이관전-*.db").Length, 1);
             }
             finally { 치우기(dir); }
         }

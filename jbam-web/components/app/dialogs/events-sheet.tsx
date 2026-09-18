@@ -56,7 +56,7 @@ export function EventsSheet({
                     <span className="text-xs text-muted-foreground">{e.source}</span>
                     <span className="ml-auto text-xs tabular-nums text-muted-foreground">{e.at.slice(0, 16)}</span>
                   </div>
-                  <p className="mt-1 text-sm">{eventSummary(e) || "—"}</p>
+                  <p className="mt-1 text-sm">{eventSummary(e) || "없음"}</p>
                 </li>
               ))}
             </ol>

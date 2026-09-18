@@ -24,12 +24,16 @@ async function read<T>(res: Response): Promise<T> {
   return body as T
 }
 
-type Params = Record<string, string | number | boolean | null | undefined>
+type Params = Record<string, string | number | boolean | string[] | null | undefined>
 
 function query(params?: Params): string {
   if (!params) return ""
   const q = new URLSearchParams()
-  for (const [k, v] of Object.entries(params)) if (v !== null && v !== undefined && v !== "") q.set(k, String(v))
+  for (const [k, v] of Object.entries(params)) {
+    // 배열은 같은 이름으로 여러 번 보낸다 (차입 스케줄의 고친 금액 ov=…).
+    if (Array.isArray(v)) for (const x of v) q.append(k, x)
+    else if (v !== null && v !== undefined && v !== "") q.set(k, String(v))
+  }
   const s = q.toString()
   return s ? `?${s}` : ""
 }

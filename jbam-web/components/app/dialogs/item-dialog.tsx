@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon, GripHorizontalIcon, PlusIcon, Trash2Icon } from "lucide-react"
+import { ArrowDownIcon, ArrowUpIcon, ChevronRightIcon, FileSpreadsheetIcon, GripHorizontalIcon, NotebookPenIcon, PlusIcon, Trash2Icon } from "lucide-react"
 
 import { errorMessage, post } from "@/lib/api"
 import { dayLabel, FLOW_CARDS, itemSummary, parseMonths, parseWon, won } from "@/lib/logic"
@@ -10,6 +10,8 @@ import type { FlowName, Item } from "@/lib/types"
 import { useCloseGuard } from "@/hooks/use-close-guard"
 import { useDraggable } from "@/hooks/use-draggable"
 import { useApp } from "@/components/app/app-context"
+import { LoanImportDialog } from "@/components/app/dialogs/loan-import-dialog"
+import { BackButton } from "@/components/app/parts"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -48,8 +50,8 @@ const MAX_STEPS = 8
 
 const DEFAULT_STEPS: Step[] = [
   { name: "안내 받음", action: "" },
-  { name: "처리", action: "처리하기" },
-  { name: "완료", action: "완료하기" },
+  { name: "처리", action: "처리" },
+  { name: "완료", action: "완료" },
 ]
 
 function fromItem(it: Item | null, today: string): Form {
@@ -85,9 +87,10 @@ function stepsError(steps: Step[]): string | null {
 
 /**
  * 항목 추가·수정 (AC-W7, W25~W27, W32, W38~W42, W92, ADR-0015, ADR-0020).
- * 한 칸 흐름에 무엇을 · 언제 · 어떻게 · 금액 네 묶음, 홈페이지·비고는 '더 보기' 로 접어 둔다.
+ * 한 칸 흐름에 항목 · 기한 · 진행 방식 · 금액 네 묶음, 홈페이지·비고는 '더 보기' 로 접어 둔다.
  * id 는 서버가 만든다. 머리 부분을 끌어 창을 옮길 수 있다.
  * 진행흐름 '사용자설정' 은 단계 수·이름·버튼 문구를 직접 정한다.
+ * 새 항목은 종류(일반 비용 / 차입금 이자)를 먼저 고른다. 차입금 이자는 이 창을 닫고 스케줄 올리기 창을 연다 (ADR-0023).
  */
 export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; open: boolean; onOpenChange: (v: boolean) => void }) {
   const app = useApp()
@@ -101,6 +104,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
   const [busy, setBusy] = React.useState(false)
   const [more, setMore] = React.useState(false)
   const [snapshot, setSnapshot] = React.useState("")
+  const [kind, setKind] = React.useState<"pick" | "normal">("normal")
 
   React.useEffect(() => {
     if (!open) return
@@ -111,6 +115,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
     setAmountYear(app.today.slice(0, 4))
     setSource("")
     setError(null)
+    setKind(item ? "normal" : "pick")
     // 홈페이지·비고에 이미 값이 있으면 펼친 채로 연다.
     setMore(Boolean(item && (item.siteName || item.siteUrl || item.memo)))
   }, [open, item, app.today])
@@ -126,6 +131,32 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
     snapshot !== "" &&
     (JSON.stringify(f) !== snapshot || Object.values(amounts).some((v) => v.trim() !== "") || source.trim() !== "")
   const guardedClose = useCloseGuard(dirty, onOpenChange, "항목 내용")
+  const [loanOpen, setLoanOpen] = React.useState(false)
+
+  /** 차입금 이자를 고르면 이 창을 닫고 차입 스케줄 창을 연다. */
+  function openLoanImport() {
+    onOpenChange(false)
+    setLoanOpen(true)
+  }
+
+  /** 차입 스케줄 창의 뒤로가기 — 종류 고르기로 돌아온다. */
+  function backFromLoan() {
+    setLoanOpen(false)
+    app.openItem(null)
+  }
+
+  /** 일반 비용 입력에서 종류 고르기로. 입력한 내용이 있으면 먼저 묻는다 (ADR-0022). */
+  async function backToPick() {
+    if (dirty && !(await app.confirm(backConfirm))) return
+    const init = fromItem(null, app.today)
+    setF(init)
+    setSnapshot(JSON.stringify(init))
+    setAmounts({})
+    setSource("")
+    setError(null)
+    setMore(false)
+    setKind("pick")
+  }
 
   const setStep = (i: number, patch: Partial<Step>) =>
     set("steps", f.steps.map((s, j) => (j === i ? { ...s, ...patch } : s)))
@@ -210,17 +241,50 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
   }
 
   return (
+    <>
+    <LoanImportDialog open={loanOpen} onOpenChange={setLoanOpen} onBack={backFromLoan} />
     <Dialog open={open} onOpenChange={guardedClose}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-[520px]" style={drag.style}>
         <DialogHeader {...drag.handleProps} className={`${drag.handleProps.className} rounded-t-xl px-5 pt-5 pb-2`}>
+          {isNew && kind === "normal" && <BackButton onClick={backToPick} />}
           <div className="flex items-center gap-2 pr-8">
-            <DialogTitle>{isNew ? "항목 추가" : `${item.name} 수정`}</DialogTitle>
+            <DialogTitle>{!isNew ? `${item.name} 수정` : kind === "pick" ? "항목 추가" : "일반 비용"}</DialogTitle>
             <GripHorizontalIcon className="size-4 text-muted-foreground/60" aria-hidden />
           </div>
           <DialogDescription>
-            {isNew ? "매년 반복되는 기한을 등록합니다." : <span className="tabular-nums">id {item.id}</span>}
+            {!isNew ? (
+              <span className="tabular-nums">id {item.id}</span>
+            ) : kind === "pick" ? (
+              "등록할 종류를 고르세요."
+            ) : (
+              "매년 돌아오는 납부·신고 기한"
+            )}
           </DialogDescription>
         </DialogHeader>
+        {kind === "pick" ? (
+          <>
+            <div className="flex flex-col gap-2.5 px-5 pt-2 pb-5" role="group" aria-label="등록할 종류">
+              <KindButton
+                icon={<NotebookPenIcon />}
+                title="일반 비용"
+                description="매년 돌아오는 납부·신고 기한"
+                examples={["부가세", "분담금", "협회비"]}
+                onClick={() => setKind("normal")}
+              />
+              <KindButton
+                icon={<FileSpreadsheetIcon />}
+                title="차입금 이자"
+                description="ERP 스케줄 파일로 분기 이자 등록"
+                onClick={openLoanImport}
+              />
+            </div>
+            <DialogFooter className="m-0 rounded-b-xl px-5 py-3">
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+                취소
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
         <form
           onSubmit={(e) => {
             e.preventDefault()
@@ -229,7 +293,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
           className="flex min-h-0 flex-1 flex-col"
         >
           <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-5 pt-2 pb-5">
-            <Group title="무엇을">
+            <Group title="항목">
               <div className="grid grid-cols-[1fr_1.4fr] gap-3">
                 <Field>
                   <FieldLabel htmlFor="it-org">기관</FieldLabel>
@@ -242,7 +306,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
               </div>
             </Group>
 
-            <Group title="언제">
+            <Group title="기한">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm">
                 <span>매년</span>
                 <Input
@@ -277,17 +341,17 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
                 />
                 <span>영업일 전에 알림</span>
               </div>
-              <FieldDescription>
-                주말·공휴일이면 다음 영업일로 옮겨집니다.
+              <ul className="flex list-disc flex-col gap-0.5 pl-4 text-sm text-muted-foreground">
+                <li>휴일이면 다음 영업일로 미뤄집니다.</li>
                 {isNew && (
-                  <>
-                    {" "}분할납부는 월에 <code className="rounded bg-muted px-1">5,6,7</code> 처럼 쉼표로.
-                  </>
+                  <li>
+                    여러 달에 나눠 내면 <code className="rounded bg-muted px-1">5,6,7</code>처럼 쉼표로 적습니다.
+                  </li>
                 )}
-              </FieldDescription>
+              </ul>
             </Group>
 
-            <Group title="어떻게 진행하나요">
+            <Group title="진행 방식">
               <div className="grid grid-cols-2 gap-2" role="group" aria-label="진행흐름">
                 {FLOW_CARDS.map((c) => {
                   const on = f.flow === c.flow
@@ -517,8 +581,44 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
             </Button>
           </DialogFooter>
         </form>
+        )}
       </DialogContent>
     </Dialog>
+    </>
+  )
+}
+
+const backConfirm = {
+  title: "입력한 내용을 버리고 돌아갈까요?",
+  description: "입력한 항목 내용이 저장되지 않고 사라집니다.",
+  action: "뒤로가기",
+  destructive: true,
+}
+
+/** 종류 고르기의 한 칸. 누르면 바로 다음으로 넘어간다. */
+function KindButton({
+  icon, title, description, examples, onClick,
+}: { icon: React.ReactNode; title: string; description: string; examples?: string[]; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-start gap-3 rounded-lg border px-4 py-3.5 text-left transition-colors outline-none hover:border-foreground/40 hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50"
+    >
+      <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground [&_svg]:size-4">{icon}</span>
+      <span className="flex min-w-0 flex-col gap-1">
+        <span className="text-sm font-semibold">{title}</span>
+        <span className="text-sm text-muted-foreground">{description}</span>
+        {examples && (
+          <span className="mt-1 flex flex-wrap gap-1">
+            {examples.map((e) => (
+              <span key={e} className="rounded-full border bg-muted/40 px-2 text-xs text-muted-foreground">{e}</span>
+            ))}
+          </span>
+        )}
+      </span>
+      <ChevronRightIcon className="mt-2 ml-auto size-4 shrink-0 text-muted-foreground" />
+    </button>
   )
 }
 
