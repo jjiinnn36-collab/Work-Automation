@@ -243,7 +243,7 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
   return (
     <>
     <LoanImportDialog open={loanOpen} onOpenChange={setLoanOpen} onBack={backFromLoan} />
-    <Dialog open={open} onOpenChange={guardedClose}>
+    <Dialog open={open} disablePointerDismissal onOpenChange={guardedClose}>
       <DialogContent className="flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-[520px]" style={drag.style}>
         <DialogHeader {...drag.handleProps} className={`${drag.handleProps.className} rounded-t-xl px-5 pt-5 pb-2`}>
           {isNew && kind === "normal" && <BackButton onClick={backToPick} />}

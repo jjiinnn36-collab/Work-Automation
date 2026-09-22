@@ -1,0 +1,18 @@
+{
+  "name": "payment-alert-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "납부 기한 알림 — 맥·리눅스 겸용 정리 화면 서버 (설치·의존성 없음, Node 내장 기능만 사용)",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "payment-alert": "server.js",
+    "payment-alert-popup": "bin/popup-open.js"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "popup": "node bin/popup-open.js --always"
+  }
+}

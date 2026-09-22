@@ -101,7 +101,7 @@ export function GroupAmountDialog({
 
   let firstEditable = true
   return (
-    <Dialog open={open} onOpenChange={guardedClose}>
+    <Dialog open={open} disablePointerDismissal onOpenChange={guardedClose}>
       <DialogContent className="sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{data ? `${data.name} 회차 금액` : "회차 금액"}</DialogTitle>

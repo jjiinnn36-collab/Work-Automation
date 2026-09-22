@@ -110,7 +110,7 @@ namespace PaymentAlert
                 }
                 else
                 {
-                    묶음 = env.Db.차입묶음(plan.거래처, plan.차입일);
+                    묶음 = null;   // 차입명이 정해진 뒤(아래) 차입명 기준으로 기존 건을 찾는다.
                 }
 
                 var job = new 차입할일();
@@ -119,17 +119,20 @@ namespace PaymentAlert
                 할일.Add(job);
             }
 
-            // 저장 전에 이름을 모두 확인한다 — 앞 시트만 저장되고 뒤에서 멈추지 않게.
-            Dictionary<string, Store.차입건> 기존 = new Dictionary<string, Store.차입건>(StringComparer.Ordinal);
-            foreach (Store.차입건 x in env.Db.차입목록()) 기존[x.묶음] = x;
+            // 이름을 먼저 정하고, 그 다음 차입명 기준으로 기존 차입건(같은 거래처·차입일·차입명)을 찾는다.
+            // 거래처만 같은 다른 사업은 새 건으로 들어간다 (사용자 요청 2026-09-22).
             foreach (차입할일 job in 할일)
             {
-                Store.차입건 있던;
-                if (job.묶음 != null && 기존.TryGetValue(job.묶음, out 있던)) { job.Plan.차입명 = 있던.차입명; job.Plan.약칭 = 있던.약칭; }
+                if (대상 != null)
+                {
+                    job.Plan.차입명 = 대상.차입명; job.Plan.약칭 = 대상.약칭;   // 연장: 대상 이름을 잇는다.
+                    continue;
+                }
                 string[] nm;
-                if (대상 == null && 이름들.TryGetValue(job.Sheet.이름, out nm)) { job.Plan.차입명 = nm[0]; job.Plan.약칭 = nm[1]; }
-                if (mode == "save" && job.선택됨 && 대상 == null && job.Plan.차입명.Trim().Length == 0)
-                    throw new HttpError(400, "차입명을 넣어 주세요 (" + (job.Plan.거래처.Length > 0 ? job.Plan.거래처 : job.Sheet.이름) + ").");
+                if (이름들.TryGetValue(job.Sheet.이름, out nm)) { job.Plan.차입명 = nm[0]; job.Plan.약칭 = nm[1]; }
+                // 차입명이 비면 시트명을 차입명으로 쓴다 (사용자 요청 2026-09-22).
+                if (job.Plan.차입명 == null || job.Plan.차입명.Trim().Length == 0) job.Plan.차입명 = (job.Sheet.이름 ?? "").Trim();
+                job.묶음 = env.Db.차입묶음(job.Plan.거래처, job.Plan.차입일, job.Plan.차입명);
             }
 
             foreach (차입할일 job in 할일)

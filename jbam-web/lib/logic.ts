@@ -49,15 +49,16 @@ export function visibleSteps(o: { stages: string[]; stage: number; hideStart?: b
 
 /** 카드의 진행 한 줄: "1/3 신고 완료". 시작점을 숨긴 흐름에서 아직 아무것도 안 했으면 "0/3 진행 전". */
 export function progressText(o: { stages: string[]; stage: number; stageName: string; hideStart?: boolean; done?: boolean }): string {
-  const { names, stage } = visibleSteps(o)
-  if (stage < 0) return `0/${names.length} 진행 전`
-  return `${stage + 1}/${names.length} ${o.stageName} 완료`
+  const { stage } = visibleSteps(o)
+  // 앞의 'n/N' 숫자는 날짜처럼 보여 헷갈려서 뺀다 (사용자 요청). 단계 이름만 남긴다.
+  if (stage < 0) return "진행 전"
+  return `${o.stageName} 완료`
 }
 
-/** 말풍선 문구 (AC-W48, W75a): "2/4 신고 · 진행중" */
+/** 말풍선 문구: "신고 · 진행중" */
 export function stepTooltip(names: string[], i: number, state: StepState): string {
   const word = state === "past" ? "완료" : state === "current" ? "진행중" : "진행예정"
-  return `${i + 1}/${names.length} ${names[i]} · ${word}`
+  return `${names[i]} · ${word}`
 }
 
 export type YearStatus = "done" | "overdue" | "progress" | "upcoming" | "before"

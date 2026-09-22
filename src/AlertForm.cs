@@ -797,6 +797,13 @@ namespace PaymentAlert
             if (!적용(row, 동작)) return;
             if (동작 == "진행") row.오늘단계변경 = true;
             RefreshState();
+            // 기한 당일·지난 건을 진행했는데 아직 마지막(납부)이 아니면, 넘기지 않고 같은 카드에서
+            // 다음 단계 버튼을 바로 내밀어 연달아 처리하게 한다 (사용자 요청 2026-09-22).
+            if (동작 == "진행" && row.기한임박(today))
+            {
+                입력잠시막기();   // 앞 카드로 간 누름이 새 버튼에 잘못 들어가지 않게
+                return;
+            }
             // 고른 건은 잠깐 보여 준 뒤 다음 남은 건으로, 다 골랐으면 완료 장으로 넘긴다 (시안 v4·v5).
             넘김타이머.Stop();
             넘김타이머.Start();
@@ -808,8 +815,8 @@ namespace PaymentAlert
         /// </summary>
         string 되돌릴것(AlertRow row)
         {
-            bool 대기함 = !row.오늘단계변경 && !row.최종단계도달 &&
-                row.Status.최종확인일.HasValue && row.Status.최종확인일.Value.Date == today.Date;
+            bool 대기함 = row.오늘이미대기 || (!row.오늘단계변경 && !row.최종단계도달 &&
+                row.Status.최종확인일.HasValue && row.Status.최종확인일.Value.Date == today.Date);
             if (대기함) return "대기취소";
             if (row.Status.단계 > 0) return "되돌리기";
             return null;

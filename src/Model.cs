@@ -398,6 +398,9 @@ namespace PaymentAlert
         /// <summary>이 세션에서 단계를 바꿨는가.</summary>
         public bool 오늘단계변경;
 
+        /// <summary>오늘 이미 '오늘은 대기' 를 눌러 미뤄 둔 건인가 (교차 세션). 팝업에도 보여 주되 처리로 본다 (사용자 요청 2026-09-22).</summary>
+        public bool 오늘이미대기;
+
         public Flow Flow { get { return Occ.Item.진행흐름; } }
         public string[] 단계목록 { get { return Stages.For(Occ.Item); } }
         public int 단계 { get { return Status.단계; } }
@@ -412,11 +415,19 @@ namespace PaymentAlert
         /// <summary>지금 누를 행동 (예: 전표 발행). 끝났으면 null.</summary>
         public string 다음행동 { get { return Stages.다음행동(Occ.Item, 단계); } }
 
+        /// <summary>기한 당일·지난 미완료 건인가 (기한임박). 이 건은 한 단계 진행해도 알림을 끝내지 않는다.</summary>
+        public bool 기한임박(DateTime today) { return !최종단계도달 && Occ.보정기한일.Date <= today.Date; }
+
         /// <summary>오늘 처리되었는가. 닫기 가능 판정에 쓰인다.</summary>
         public bool 오늘처리됨(DateTime today)
         {
-            if (오늘단계변경) return true;
             if (최종단계도달) return true;
+            if (오늘이미대기) return true;   // 오늘 대기해 둔 건 — 보이되 처리로 봐서 닫기를 막지 않는다
+            // 기한 당일·지난 건은 한 단계 진행(오늘단계변경)해도 처리로 보지 않는다 — 납부까지 계속 민다.
+            // '오늘은 대기' 를 눌러 최종확인일이 오늘로 찍힌 것만 그날 처리로 본다 (사용자 요청 2026-09-22).
+            if (기한임박(today))
+                return Status.최종확인일.HasValue && Status.최종확인일.Value.Date == today.Date;
+            if (오늘단계변경) return true;
             return Status.최종확인일.HasValue && Status.최종확인일.Value.Date == today.Date;
         }
     }

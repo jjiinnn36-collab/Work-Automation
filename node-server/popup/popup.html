@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- 브라우저 앱 창의 제목 바 색을 팝업과 같은 흰색으로 → 회색 바가 사라져 신호등만 남는다 (설치 없이 가능한 최선). -->
+<meta name="theme-color" content="#ffffff" />
+<title>납부 기한 알림</title>
+<style>
+  /* 윈도우 팝업(AlertForm)의 shadcn neutral 팔레트를 그대로 옮김. 원본이 흰 바탕 단일 테마. */
+  :root{
+    --canvas:#ffffff; --paper:#f5f5f5; --border:#e5e5e5; --line:#f0f0f0;
+    --ink:#0a0a0a; --muted:#737373; --faint:#a1a1a1;
+    --action:#155dfc; --action-hi:#1447e6;
+    --soft:#f4f4f5; --soft-hi:#e9e9eb; --danger:#e7000b;
+    --step-fill:#3a3a3a; --step-empty:#e8e8e8;
+    --dot-now:#3a3a3a; --dot-done:#d4d4d4; --dot-ring:#c4c4c4;
+    --desk:#e9eaee;   /* 큰 창에서 카드 뒤 바탕 */
+  }
+  @media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){ --desk:#0f1012; } }
+  :root[data-theme="dark"]{ --desk:#0f1012; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; }
+  /* 바탕: 큰 창(일반 탭)에서는 카드가 가운데에 작게 보이고, 작은 앱 창에서는 딱 맞게 채운다. */
+  body{ background:var(--desk); color:var(--ink); min-height:100%;
+    display:flex; align-items:center; justify-content:center;
+    font-family:"Pretendard","Apple SD Gothic Neo","Malgun Gothic","맑은 고딕",-apple-system,system-ui,sans-serif; }
+
+  /* 팝업 카드: 폭은 최대 380px, 높이 고정 236px. 어떤 브라우저에서 열려도 작은 카드로 보인다. */
+  .win{ position:relative; width:100%; max-width:380px; height:236px; background:var(--canvas); overflow:hidden;
+    border-radius:12px; box-shadow:0 12px 40px rgba(20,24,40,.18), 0 2px 6px rgba(20,24,40,.10);
+    transition:height .2s ease; }
+  body.min .win{ height:44px; }
+
+  .head{ position:absolute; left:0; top:0; width:100%; height:44px; }
+  .head .title{ position:absolute; left:16px; top:13px; font-size:13px; font-weight:700; color:var(--muted); }
+  .head .count{ position:absolute; top:15px; font-size:12px; color:var(--faint); }
+  .head .icon{ position:absolute; top:11px; height:22px; display:flex; align-items:center; justify-content:center;
+    color:var(--muted); border-radius:8px; font-size:14px; cursor:pointer; background:transparent; border:none; }
+  .head .icon:hover{ background:var(--soft); }
+  .head .gear{ right:40px; width:24px; }
+  .head .fold{ right:12px; width:24px; font-size:12px; }
+  /* 최소화(접기): 헤더 줄만 남긴다 (윈도우 팝업과 같게). */
+  body.min .stage, body.min .nav{ display:none; }
+  body.min .head{ cursor:pointer; }
+  body.min .head .title{ color:var(--ink); }
+  body.min .head .count{ color:var(--action); font-weight:700; }
+
+  .stage{ position:absolute; left:0; top:44px; right:0; bottom:44px; overflow:hidden; }
+  .card{ position:absolute; inset:0; will-change:transform; }
+  .card .name{ position:absolute; left:16px; top:6px; height:30px; display:flex; align-items:center; gap:6px;
+    right:16px; font-size:19px; font-weight:700; color:var(--ink); white-space:nowrap; overflow:hidden; }
+  .card .name .loan{ font-size:12px; font-weight:400; color:var(--muted); }
+  .card .status{ position:absolute; left:16px; top:42px; font-size:13px; font-weight:700; }
+  .card .extra{ position:absolute; top:43px; font-size:13px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .stepbar{ position:absolute; left:16px; top:74px; right:16px; height:14px; display:flex; align-items:center; gap:6px; }
+  .stepbar .seg{ flex:1; display:flex; gap:3px; }
+  .stepbar .cell{ flex:1; height:4px; border-radius:2px; background:var(--step-empty); }
+  .stepbar .cell.on{ background:var(--step-fill); }
+  .stepbar .n{ font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .row-btn{ position:absolute; left:16px; top:102px; right:16px; display:flex; align-items:center; gap:6px; }
+  .btn{ height:28px; border-radius:8px; border:1px solid var(--border); background:var(--canvas); color:var(--ink);
+    font:inherit; font-size:12px; font-weight:700; padding:0 13px; cursor:pointer; display:inline-flex; align-items:center; gap:4px; }
+  .btn.primary{ background:var(--action); border-color:var(--action); color:#fff; }
+  .btn.primary:hover{ background:var(--action-hi); }
+  .btn.soft{ background:var(--soft); border-color:var(--soft); }
+  .btn.soft:hover{ background:var(--soft-hi); }
+  .btn.more{ margin-left:auto; width:28px; padding:0; justify-content:center; color:var(--muted); font-size:15px; }
+  .btn:disabled{ opacity:.55; cursor:default; }
+  .done-mark{ font-size:12px; font-weight:700; color:var(--muted); display:inline-flex; align-items:center; gap:5px; }
+
+  .card.finish .ftitle{ position:absolute; left:16px; top:20px; font-size:17px; font-weight:700; color:var(--ink); }
+  .card.finish .fdesc{ position:absolute; left:16px; top:50px; font-size:13px; color:var(--muted); }
+  .card.finish .row-btn{ top:82px; }
+
+  .msg{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; text-align:center;
+    color:var(--muted); font-size:14px; padding:0 24px; line-height:1.6; }
+
+  .nav{ position:absolute; left:0; bottom:0; width:100%; height:44px; border-top:1px solid var(--line);
+    display:flex; align-items:center; }
+  .arrow{ width:34px; height:28px; margin:0 8px; border:none; background:transparent; color:var(--ink);
+    font-size:17px; border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; }
+  .arrow:disabled{ color:#cfcfcf; cursor:default; }
+  .arrow:not(:disabled):hover{ background:var(--soft); }
+  .preview{ flex:1; min-width:0; font-size:12px; color:var(--muted); cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .preview .lead{ color:var(--faint); } .preview .nm{ color:var(--ink); font-weight:700; }
+  .dots{ display:flex; align-items:center; gap:6px; padding:0 6px; }
+  .dots .d{ width:7px; height:7px; border-radius:99px; border:1.5px solid var(--dot-ring); background:var(--canvas); }
+  .dots .d.now{ width:18px; background:var(--dot-now); border-color:var(--dot-now); }
+  .dots .d.done{ background:var(--dot-done); border-color:var(--dot-done); }
+  .dots .d.overdue{ background:var(--danger); border-color:var(--danger); }
+  .dots .txt{ font-size:11px; font-weight:700; color:var(--muted); }
+
+  .toast{ position:fixed; left:50%; bottom:52px; transform:translateX(-50%); background:#111; color:#fff;
+    font-size:12px; padding:8px 14px; border-radius:999px; opacity:0; transition:opacity .2s; pointer-events:none; z-index:5; }
+  .toast.on{ opacity:1; }
+  @media (prefers-reduced-motion: reduce){ .card{ transition:none !important; } }
+</style>
+</head>
+<body>
+  <div class="win" id="win" tabindex="0">
+    <div class="head" id="head">
+      <span class="title">기한 알림</span>
+      <span class="count" id="count"></span>
+      <button class="icon gear" id="gear" title="정리 화면 열기">⚙</button>
+      <button class="icon fold" id="fold" title="접기 / 펼치기">▾</button>
+    </div>
+    <div class="stage" id="stage"><div class="msg">불러오는 중…</div></div>
+    <div class="nav" id="nav" hidden>
+      <button class="arrow" id="prev" title="이전 건 (←)">‹</button>
+      <span class="preview" id="preview"></span>
+      <span class="dots" id="dots"></span>
+      <button class="arrow" id="next" title="다음 건 (→)">›</button>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+var $ = function(s){ return document.querySelector(s); };
+var rows = [];
+var idx = 0, finishView = false, busy = false, loaded = false, minimized = false;
+var 펼친높이 = 0;   // 접기 전 창 높이 (펼칠 때 되돌린다)
+
+// 접기/펼치기: 헤더 줄만 남긴다. 브라우저 앱 창이면 창 크기도 줄인다 (윈도우 팝업과 같게).
+function setMin(v){
+  minimized = v;
+  document.body.classList.toggle("min", v);
+  var f=$("#fold"); if(f) f.textContent = v ? "▴" : "▾";
+  renderChrome();
+  try{
+    var chrome = window.outerHeight - window.innerHeight;   // 창 테두리·제목줄 높이
+    if (v){
+      펼친높이 = window.outerHeight;
+      var target = 44 + Math.max(0, chrome);
+      window.resizeTo(window.outerWidth, target);
+      window.moveBy(0, 펼친높이 - target);                 // 바닥 고정: 줄어든 만큼 창을 아래로
+    } else if (펼친높이 > 0){
+      var cur = window.outerHeight;
+      window.resizeTo(window.outerWidth, 펼친높이);
+      window.moveBy(0, cur - 펼친높이);                    // 바닥 고정: 늘어난 만큼 창을 위로
+    }
+  }catch(e){ /* 창 크기·위치 조절이 막혀 있어도 화면은 접힌다 */ }
+}
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,function(c){return ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"})[c]; }); }
+function toast(m){ var t=$("#toast"); t.textContent=m; t.classList.add("on"); setTimeout(function(){ t.classList.remove("on"); },1600); }
+
+async function api(path, form){
+  var opt={ method: form?"POST":"GET", cache:"no-store", headers:{} };
+  if (form){ opt.headers["X-PaymentAlert"]="1"; opt.headers["Content-Type"]="application/x-www-form-urlencoded;charset=UTF-8"; opt.body=new URLSearchParams(form).toString(); }
+  var r=await fetch(path, opt); var j=await r.json().catch(function(){return {};});
+  if (!r.ok) throw new Error(j.error || ("오류 "+r.status));
+  return j;
+}
+
+function fromDto(d){
+  return { year:d.year, id:d.id, org:d.org, name:d.name, loan:d.loan, daysLeft:d.daysLeft,
+    payDue:d.payDue, payDow:d.payDow, amount:d.amount, paid:d.paid, stage:d.stage, stages:d.stages,
+    hideStart:d.hideStart, nextAction:d.nextAction, done:d.done,
+    handled:!!d.confirmedToday, advanced:!!d.confirmedToday && !d.deferredToday, deferred:!!d.deferredToday };
+}
+
+function nextPending(from){ for(var k=1;k<=rows.length;k++){ var j=((from+k)%rows.length+rows.length)%rows.length; if(!rows[j].handled) return j; } return -1; }
+function pendingCount(){ var n=0; for(var i=0;i<rows.length;i++) if(!rows[i].handled) n++; return n; }
+
+function statusOf(r){
+  if (r.done) return { t:"모두 완료", c:"var(--muted)" };
+  if (r.handled){ if(r.daysLeft>0) return {t:"D-"+r.daysLeft,c:"var(--muted)"}; if(r.daysLeft===0) return {t:"오늘 기한",c:"var(--muted)"}; return {t:(-r.daysLeft)+"영업일 지남",c:"var(--muted)"}; }
+  if (r.daysLeft>0) return { t:"D-"+r.daysLeft, c:"var(--ink)" };
+  if (r.daysLeft===0) return { t:"오늘 기한", c:"var(--ink)" };
+  return { t:(-r.daysLeft)+"영업일 지남", c:"var(--danger)" };
+}
+function shortStatus(r){
+  if (r.done) return "모두 완료";
+  if (r.handled) return r.advanced ? "처리함" : "내일 다시";
+  if (r.daysLeft>0) return "D-"+r.daysLeft; if (r.daysLeft===0) return "오늘 기한"; return (-r.daysLeft)+"일 지남";
+}
+function moneyPart(r){ if(r.amount!=null) return Number(r.amount).toLocaleString("en-US")+"원"; return r.paid ? "금액 미확인" : ""; }
+
+function stepBar(r){
+  var vis = r.hideStart ? r.stages.slice(1) : r.stages.slice();
+  var n = vis.length;
+  var filled = r.done ? n : Math.max(0, Math.min(n, r.stage + 1 - (r.hideStart?1:0)));
+  var cells=""; for(var i=0;i<n;i++) cells+='<div class="seg"><span class="cell'+(i<filled?" on":"")+'"></span></div>';
+  // 'n/N' 숫자는 날짜처럼 보여 헷갈려서 뺀다 (사용자 요청). 막대만 남긴다.
+  return '<div class="stepbar">'+cells+'</div>';
+}
+
+function cardHTML(r){
+  var st=statusOf(r);
+  var extra="· "+r.payDue.slice(5).replace("-","/")+" ("+r.payDow+")";
+  var mp=moneyPart(r); if(mp) extra+=" · "+mp;
+  var loanTag=r.loan?' <span class="loan">'+esc(r.org)+'</span>':"";
+  var buttons;
+  if (r.handled || r.done){
+    var mark=r.done?"모두 완료":(r.advanced?"처리함":"내일 다시 알림");
+    buttons='<span class="done-mark">✓ '+mark+'</span>'
+      +(!r.done?'<button class="btn soft" data-act="undo">되돌리기</button>':'')
+      +'<button class="btn more" data-act="more">⋯</button>';
+  } else {
+    buttons='<button class="btn primary" data-act="go">'+esc(r.nextAction||"")+' →</button>'
+      +'<button class="btn soft" data-act="defer">오늘은 대기</button>'
+      +'<button class="btn more" data-act="more">⋯</button>';
+  }
+  return '<div class="name">'+esc(r.name)+loanTag+'</div>'
+    +'<div class="status" id="stt" style="color:'+st.c+'">'+esc(st.t)+'</div>'
+    +'<div class="extra" id="ext">'+esc(extra)+'</div>'
+    +stepBar(r)+'<div class="row-btn">'+buttons+'</div>';
+}
+function finishHTML(){
+  var go=0,df=0; rows.forEach(function(r){ if(r.handled){ if(r.advanced) go++; else df++; } });
+  var p=[]; if(go)p.push("진행 "+go+"건"); if(df)p.push("오늘은 대기 "+df+"건");
+  return '<div class="ftitle">오늘 확인할 건을 모두 골랐습니다</div>'
+    +'<div class="fdesc">'+(p.length?p.join(" · "):"모두 완료된 건입니다")+'</div>'
+    +'<div class="row-btn"><button class="btn primary" data-act="close">닫기</button>'
+    +'<button class="btn soft" data-act="web">정리 화면 열기</button></div>';
+}
+function buildCard(){
+  var el=document.createElement("div");
+  el.className="card"+(finishView?" finish":"");
+  el.innerHTML=finishView?finishHTML():cardHTML(rows[idx]);
+  el.addEventListener("click", onCardClick);
+  return el;
+}
+function positionExtra(el){ var stt=el.querySelector("#stt"),ext=el.querySelector("#ext"); if(stt&&ext){ ext.style.left=(16+stt.offsetWidth+6)+"px"; ext.style.right="16px"; } }
+function place(el){ var s=$("#stage"); s.innerHTML=""; s.appendChild(el); positionExtra(el); }
+
+function renderChrome(){
+  $("#count").textContent = minimized ? rows.length+"건" : (finishView ? rows.length+"건" : (idx+1)+"/"+rows.length);
+  var title=$(".title"); $("#count").style.left=(16+title.offsetWidth+6)+"px";
+  var dots=$("#dots"); dots.innerHTML="";
+  if (rows.length>1){
+    if (rows.length>12){ var s=document.createElement("span"); s.className="txt"; s.textContent=finishView?rows.length+"건":(idx+1)+" / "+rows.length; dots.appendChild(s); }
+    else { for(var i=0;i<rows.length;i++){ var d=document.createElement("span"); d.className="d";
+      if(!finishView&&i===idx) d.className+=" now"; else if(rows[i].handled) d.className+=" done"; else if(rows[i].daysLeft<0) d.className+=" overdue"; dots.appendChild(d); } }
+  }
+  var allChosen=pendingCount()===0, last=idx>=rows.length-1;
+  $("#prev").disabled = !(finishView || idx>0);
+  var canNext=!finishView && (!last || allChosen);
+  $("#next").disabled = !canNext;
+  var pv=$("#preview");
+  if (finishView) pv.innerHTML='<span class="lead">'+rows.length+'건 모두 골랐습니다</span>';
+  else if (last && allChosen) pv.innerHTML='<span class="nm">모두 골랐습니다</span><span class="lead"> · 닫으러 가기</span>';
+  else if (canNext){ var n=rows[idx+1]; pv.innerHTML='<span class="lead">다음</span> <span class="nm">'+esc(n.name)+'</span><span class="lead"> · '+esc(shortStatus(n))+'</span>'; }
+  else pv.innerHTML='<span class="lead">마지막 건입니다</span>';
+}
+function render(){ if(!rows.length){ return; } place(buildCard()); renderChrome(); }
+
+function slideTo(mutate, dir){
+  if (busy) return;
+  var stage=$("#stage"), oldCard=stage.firstElementChild;
+  mutate();
+  if (dir===0 || !oldCard){ render(); return; }
+  busy=true;
+  var newCard=buildCard();
+  newCard.style.transform="translateX("+(dir>0?100:-100)+"%)";
+  stage.appendChild(newCard); positionExtra(newCard); renderChrome();
+  void newCard.offsetWidth;
+  var dur=260;
+  oldCard.style.transition="transform "+dur+"ms cubic-bezier(.22,.61,.36,1)";
+  newCard.style.transition="transform "+dur+"ms cubic-bezier(.22,.61,.36,1)";
+  oldCard.style.transform="translateX("+(dir>0?-100:100)+"%)"; newCard.style.transform="translateX(0)";
+  setTimeout(function(){ if(oldCard&&oldCard.parentNode) oldCard.parentNode.removeChild(oldCard); busy=false; }, dur+30);
+}
+function go(dir){
+  if (busy) return;
+  if (finishView){ if(dir<0) slideTo(function(){finishView=false;}, -1); return; }
+  var t=idx+dir;
+  if (t>=rows.length && pendingCount()===0){ slideTo(function(){finishView=true;}, 1); return; }
+  if (t<0 || t>=rows.length) return;
+  slideTo(function(){ idx=t; }, dir);
+}
+function advanceAfter(){ var n=nextPending(idx); if(n>=0) slideTo(function(){idx=n;},1); else slideTo(function(){finishView=true;},1); }
+
+async function onCardClick(e){
+  var b=e.target.closest("[data-act]"); if(!b) return;
+  var act=b.getAttribute("data-act");
+  if (act==="close"){ window.close(); setTimeout(function(){ location.href="about:blank"; },80); return; }
+  if (act==="web"){ window.open("/", "_blank", "noopener"); return; }
+  if (act==="more"){ window.open("/", "_blank", "noopener"); return; }
+  if (busy) return;
+  var r=rows[idx];
+  if (act==="go" || act==="defer"){
+    var path = act==="go" ? "/api/advance" : "/api/defer";
+    var btns=b.parentElement.querySelectorAll("button"); btns.forEach(function(x){x.disabled=true;});
+    try{
+      var d=await api(path, { y:r.year, id:r.id, stage:r.stage });
+      var nr=fromDto(d); rows[idx]=nr;
+      render(); toast(act==="go" ? (r.nextAction+" 처리했습니다") : "오늘은 대기로 두었습니다");
+      // 기한 당일·지난 건을 진행했는데 아직 납부 전이면, 넘기지 않고 같은 카드에서 다음 단계로 이어간다 (사용자 요청).
+      if (act==="go" && !nr.done && nr.daysLeft<=0) { /* 같은 카드 유지 */ }
+      else setTimeout(advanceAfter, 420);
+    }catch(err){ toast(err.message); btns.forEach(function(x){x.disabled=false;}); }
+  } else if (act==="undo"){
+    var path2 = r.deferred ? "/api/undefer" : "/api/revert";
+    try{ var d2=await api(path2, { y:r.year, id:r.id, stage:r.stage }); rows[idx]=fromDto(d2); render(); toast("되돌렸습니다"); }
+    catch(err){ toast(err.message); }
+  }
+}
+
+$("#prev").addEventListener("click", function(){ go(-1); });
+$("#next").addEventListener("click", function(){ go(1); });
+$("#preview").addEventListener("click", function(){ if(!$("#next").disabled) go(1); });
+$("#gear").addEventListener("click", function(){ window.open("/", "_blank", "noopener"); });
+$("#fold").addEventListener("click", function(e){ e.stopPropagation(); setMin(!minimized); });
+$("#head").addEventListener("click", function(e){ if(minimized && !e.target.closest("#fold") && !e.target.closest("#gear")) setMin(false); });
+document.addEventListener("keydown", function(e){
+  if(e.key==="ArrowRight"){ go(1); e.preventDefault(); }
+  else if(e.key==="ArrowLeft"){ go(-1); e.preventDefault(); }
+});
+
+async function load(){
+  try{
+    var d=await api("/api/alerts");
+    var all=(d.rows||[]).concat(d.overdue||[]);
+    rows=all.map(fromDto);
+    loaded=true;
+    if (rows.length===0){
+      $("#nav").hidden=true;
+      $("#stage").innerHTML='<div class="msg">오늘 처리할 기한이 없습니다. 👍'+(d.notYet?'<br><br>다가오는 기한 '+d.notYet+'건은 알림일이 되면 알려드립니다.':'')+'</div>';
+      $("#count").textContent="";
+      return;
+    }
+    $("#nav").hidden=false;
+    idx=Math.max(0, nextPending(-1));
+    render();
+  }catch(err){
+    $("#nav").hidden=true;
+    $("#stage").innerHTML='<div class="msg">정리 화면 서버에 연결하지 못했습니다.<br>'+esc(err.message)+'</div>';
+  }
+}
+load();
+</script>
+</body>
+</html>

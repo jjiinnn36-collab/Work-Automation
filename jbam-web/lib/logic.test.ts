@@ -38,9 +38,9 @@ test("지점 도형: 끝낸 곳 회색, 다음 한 곳만 파랑, 끝나면 전�
   assert.deepEqual(stepStates(2, 3, true), ["past", "past", "past"])
   const s = stepStates(1, 4, false)
   assert.equal(s.filter((x) => x === "current").length, 1)
-  assert.equal(stepTooltip(["신고서 작성", "신고", "전표발행", "납부"], 1, "past"), "2/4 신고 · 완료")
-  assert.equal(stepTooltip(["신고서 작성", "신고", "전표발행", "납부"], 2, "current"), "3/4 전표발행 · 진행중")
-  assert.equal(stepTooltip(["고지서수령", "전표발행", "납부"], 2, "future"), "3/3 납부 · 진행예정")
+  assert.equal(stepTooltip(["신고서 작성", "신고", "전표발행", "납부"], 1, "past"), "신고 · 완료")
+  assert.equal(stepTooltip(["신고서 작성", "신고", "전표발행", "납부"], 2, "current"), "전표발행 · 진행중")
+  assert.equal(stepTooltip(["고지서수령", "전표발행", "납부"], 2, "future"), "납부 · 진행예정")
 })
 
 test("연간 상태 분류와 남은 건 정렬 — 놓친 기한이 맨 위 (AC-W55)", () => {
@@ -238,9 +238,9 @@ test("차입명·약칭: 시트|차입명|약칭, 차입명이 비면 등록 못
 test("신고 후 납부는 시작점을 그리지 않는다 (hideStart)", () => {
   const 신고 = { stages: ["신고 전", "신고", "전표발행", "납부"], hideStart: true }
   assert.deepEqual(visibleSteps({ ...신고, stage: 0 }), { names: ["신고", "전표발행", "납부"], stage: -1 })
-  assert.equal(progressText({ ...신고, stage: 0, stageName: "신고 전" }), "0/3 진행 전")
-  assert.equal(progressText({ ...신고, stage: 1, stageName: "신고" }), "1/3 신고 완료")
+  assert.equal(progressText({ ...신고, stage: 0, stageName: "신고 전" }), "진행 전")
+  assert.equal(progressText({ ...신고, stage: 1, stageName: "신고" }), "신고 완료")
   const 납부 = { stages: ["고지서수령", "전표발행", "납부"], stage: 0, stageName: "고지서수령" }
   assert.deepEqual(visibleSteps(납부).names, ["고지서수령", "전표발행", "납부"])
-  assert.equal(progressText(납부), "1/3 고지서수령 완료")
+  assert.equal(progressText(납부), "고지서수령 완료")
 })

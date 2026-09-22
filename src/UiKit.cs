@@ -453,9 +453,8 @@ namespace PaymentAlert
             if (n == 0) return;
             Graphics g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            string t = 문구;
-            int 글폭 = TextRenderer.MeasureText(t, 글꼴).Width;
-            int 막대폭 = Width - 글폭 - 6;
+            // 'n/N' 숫자는 날짜처럼 보여 헷갈려서 뺀다 (사용자 요청). 막대만 그린다.
+            int 막대폭 = Width;
             const int 두께 = 4, 틈 = 3;
             int y = (Height - 두께) / 2;
             float 칸 = (막대폭 - 틈 * (n - 1)) / (float)n;
@@ -471,8 +470,6 @@ namespace PaymentAlert
                     using (var br = new SolidBrush(i < 채움 ? 채운칸 : 빈칸)) g.FillPath(br, p);
                 }
             }
-            TextRenderer.DrawText(g, t, 글꼴, new Rectangle(Width - 글폭, 0, 글폭, Height), Ui.아주흐림,
-                TextFormatFlags.Right | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
     }
 

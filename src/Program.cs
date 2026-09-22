@@ -20,6 +20,8 @@ namespace PaymentAlert
         {
             BaseDir = AppDomain.CurrentDomain.BaseDirectory;
             DataDir = DataPaths.자료폴더(BaseDir);
+            // 다른 PC 에 exe 만 옮겨도 되도록 자료 폴더가 없으면 만든다 (사용자 요청 2026-09-20).
+            try { Directory.CreateDirectory(DataDir); } catch { }
             LogPath = DataPaths.로그(DataDir);
 
             bool 강제표시 = false;      // --force : 오늘 이미 확인한 건도 다시 표시
@@ -54,6 +56,9 @@ namespace PaymentAlert
                     MessageBox.Show(준비실패, "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return 2;
                 }
+
+                // 첫 실행이면 공휴일 인증키를 받아 자동으로 내려받는다 (holidays.tsv 없이도 동작).
+                EnsureHolidays(today);
 
                 if (웹) return RunWeb(보드기준일, 브라우저열기);
                 if (보드) return RunBoard(보드기준일);
@@ -97,6 +102,74 @@ namespace PaymentAlert
                 foreach (string l in log) Log("  " + l);
             }
             return null;
+        }
+
+        /// <summary>
+        /// 공휴일 자료를 준비한다. 자료도 인증키도 없는 첫 실행이면 공공데이터포털 인증키를 받아
+        /// 자동으로 내려받는다. 키가 있으면 조용히 갱신만 한다 (사용자 요청 2026-09-20).
+        /// </summary>
+        static void EnsureHolidays(DateTime today)
+        {
+            try
+            {
+                string apiKeyPath = DataPaths.ApiKey(DataDir);
+                string marker = Path.Combine(DataDir, ".holiday-ask-skip");
+                var years = Scheduler.TargetYears(today);
+
+                using (Store db = Store.Open(DataPaths.Db(DataDir)))
+                {
+                    Holidays.Cache cache = db.LoadHolidays();
+                    string apiKey = File.Exists(apiKeyPath) ? File.ReadAllText(apiKeyPath, Encoding.UTF8).Trim() : null;
+
+                    bool 빠진해있음 = false;
+                    foreach (int y in years) if (!cache.Years.Contains(y)) { 빠진해있음 = true; break; }
+
+                    // 첫 실행: 공휴일도 없고 키도 없으면 키를 받는다. '나중에' 를 고르면 표시를 남겨 다시 묻지 않는다.
+                    bool 방금물음 = false;
+                    if (string.IsNullOrEmpty(apiKey) && 빠진해있음 && !File.Exists(marker))
+                    {
+                        bool 나중에;
+                        string key = ApiKeyPrompt.물어보기(out 나중에);
+                        방금물음 = true;
+                        if (!string.IsNullOrEmpty(key))
+                        {
+                            try { File.WriteAllText(apiKeyPath, key, new UTF8Encoding(false)); apiKey = key; try { File.Delete(marker); } catch { } }
+                            catch (Exception ex) { Log("인증키 저장 실패: " + ex.Message); }
+                        }
+                        else
+                        {
+                            try { File.WriteAllText(marker, "설정 화면에서 인증키를 넣으면 공휴일을 자동으로 받습니다."); } catch { }
+                            Log("공휴일 인증키 입력을 나중으로 미뤘습니다. 설정 화면에서 넣을 수 있습니다.");
+                        }
+                    }
+
+                    if (string.IsNullOrEmpty(apiKey)) return;   // 키가 없으면 주말만 반영한다
+
+                    Cursor.Current = Cursors.WaitCursor;
+                    string msg;
+                    bool 받음 = Holidays.TryRefresh(cache, apiKey, years, out msg);
+                    Cursor.Current = Cursors.Default;
+                    if (받음)
+                    {
+                        try { db.SaveHolidays(cache); }
+                        catch (Exception ex) { Log("공휴일 저장 실패: " + ex.Message); }
+                    }
+                    if (!string.IsNullOrEmpty(msg)) Log(msg);
+
+                    // 방금 키를 받은 첫 실행이면 결과를 한 번 알려 준다.
+                    if (방금물음)
+                    {
+                        if (받음)
+                            MessageBox.Show("공휴일 자료를 받았습니다.\r\n주말·공휴일이 기한 계산에 반영됩니다.",
+                                "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                        else
+                            MessageBox.Show("공휴일 자료를 받지 못했습니다.\r\n\r\n" + (msg ?? "")
+                                + "\r\n\r\n인터넷 연결과 인증키를 확인한 뒤, 설정 화면에서 다시 시도할 수 있습니다.",
+                                "납부 기한 알림", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    }
+                }
+            }
+            catch (Exception ex) { Log("공휴일 준비 중 오류: " + ex.Message); }
         }
 
         /// <summary>당월 기한 보드를 띄운다. 처리를 강제하지 않는 보기 전용 창이다.</summary>
@@ -255,13 +328,25 @@ namespace PaymentAlert
                 List<Occurrence> occurrences = Scheduler.BuildOccurrences(master, cal, today, amounts, 시작일);
                 Dictionary<string, StatusRecord> statusMap = db.LoadStatus();
 
-                if (강제표시)
-                    foreach (StatusRecord st in statusMap.Values)
-                        if (st.최종확인일.HasValue && st.최종확인일.Value.Date == today.Date)
-                            st.최종확인일 = null;
+                // 오늘 '오늘은 대기' 를 눌러 미뤄 둔 건도 팝업에 보여 준다 (웹처럼, 사용자 요청 2026-09-22).
+                // 최종확인일을 잠깐 비워 BuildRows 에 넣되, 어떤 건이 대기였는지 기억해 처리 상태로 표시한다.
+                var 마지막동작 = db.마지막동작();
+                var 오늘대기키 = new HashSet<string>(StringComparer.Ordinal);
+                foreach (StatusRecord st in statusMap.Values)
+                {
+                    if (!st.최종확인일.HasValue || st.최종확인일.Value.Date != today.Date) continue;
+                    string 마지막;
+                    bool 대기 = 마지막동작.TryGetValue(st.Key, out 마지막) && 마지막 == "대기";
+                    if (강제표시 || 대기)
+                    {
+                        if (대기) 오늘대기키.Add(st.Key);
+                        st.최종확인일 = null;   // BuildRows 가 포함하도록
+                    }
+                }
 
                 RowSet set = Scheduler.BuildRows(occurrences, statusMap, cal, today);
                 List<AlertRow> rows = set.Rows;
+                foreach (AlertRow r in rows) r.오늘이미대기 = 오늘대기키.Contains(r.Occ.Key);
 
                 foreach (AlertRow od in set.Overdue)
                     Log(string.Format("기한초과 미처리: {0} {1} 기한 {2} 단계 {3}",
@@ -293,7 +378,7 @@ namespace PaymentAlert
                     using (Store s = Store.Open(dbPath))
                     {
                         Occurrence o = row.Occ;
-                        if (동작 == "진행") return s.Advance(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, today, "팝업");
+                        if (동작 == "진행") return s.Advance(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, today, "팝업", row.기한임박(today));
                         if (동작 == "대기") return s.Defer(o.연도, o.Item.Id, row.Status.단계, DateTime.Now, today, "팝업");
                         if (동작 == "대기취소") return s.대기취소(o.연도, o.Item.Id, row.Status.단계, DateTime.Now, today, "팝업");
                         return s.Revert(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, "팝업");

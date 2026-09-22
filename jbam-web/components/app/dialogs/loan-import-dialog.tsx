@@ -150,7 +150,8 @@ export function LoanImportDialog({
       for (const x of loaded)
         for (const l of x.result?.loans ?? []) {
           const key = loanKey(x.file.name, l.sheet)
-          if (l.ok && !out[key]) out[key] = { name: l.name ?? "", short: l.short ?? "" }
+          // 차입명은 시트명으로 미리 채운다 (사용자 요청). 이미 저장된 이름이 있으면 그것을 쓴다.
+          if (l.ok && !out[key]) out[key] = { name: l.name || l.sheet, short: l.short ?? "" }
         }
       return out
     })
@@ -258,7 +259,7 @@ export function LoanImportDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={(v) => !saving && onOpenChange(v)}>
+    <Dialog open={open} disablePointerDismissal onOpenChange={(v) => !saving && onOpenChange(v)}>
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           {onBack && !extend && <BackButton onClick={back} />}
@@ -398,7 +399,7 @@ function FileResult({
             onToggle={(on) => onToggle(key, on)}
             typed={typed[key] ?? {}}
             onType={(date, v) => onType(key, date, v)}
-            names={names[key] ?? { name: l.name ?? "", short: l.short ?? "" }}
+            names={names[key] ?? { name: l.name || l.sheet, short: l.short ?? "" }}
             onRename={(patch) => onRename(key, patch)}
             showMissing={showMissing && selected.includes(key)}
             extend={extend}

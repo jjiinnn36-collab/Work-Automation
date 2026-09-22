@@ -94,7 +94,7 @@ export function AmountDialog({ o, open, onOpenChange }: { o: Occurrence | null; 
   }
 
   return (
-    <Dialog open={open} onOpenChange={guardedClose}>
+    <Dialog open={open} disablePointerDismissal onOpenChange={guardedClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{o.name} 금액</DialogTitle>

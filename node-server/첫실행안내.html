@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<style>html{color-scheme:light dark}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>첫 실행 순서 안내</title>
+<style>
+  :root {
+    --bg: #f4f4f2;
+    --surface: #ffffff;
+    --ink: #1b1c1e;
+    --muted: #6a6d73;
+    --line: #e3e3df;
+    --win: #2563eb;
+    --win-soft: #eaf1fe;
+    --mac: #3a3d42;
+    --mac-soft: #eeeeec;
+    --auto: #8a8d93;
+    --do: #b45309;
+    --do-soft: #fdf2e2;
+    --key: #047857;
+    --key-soft: #e7f5ef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #16171a;
+      --surface: #1f2024;
+      --ink: #ececed;
+      --muted: #9a9ea5;
+      --line: #2e3036;
+      --win: #6ea0ff;
+      --win-soft: #1b2740;
+      --mac: #c7cbd2;
+      --mac-soft: #26282d;
+      --auto: #838790;
+      --do: #f2a44a;
+      --do-soft: #3a2c18;
+      --key: #34d399;
+      --key-soft: #12271e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16171a; --surface: #1f2024; --ink: #ececed; --muted: #9a9ea5;
+    --line: #2e3036; --win: #6ea0ff; --win-soft: #1b2740; --mac: #c7cbd2;
+    --mac-soft: #26282d; --auto: #838790; --do: #f2a44a; --do-soft: #3a2c18;
+    --key: #34d399; --key-soft: #12271e;
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink);
+    font-family: "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕", -apple-system, system-ui, sans-serif;
+    line-height: 1.55; }
+  .wrap { max-width: 1000px; margin: 0 auto; padding-inline: 18px; padding-block: 34px 48px; }
+  code, .mono { font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace; font-size: 0.86em; }
+
+  header.top { margin-bottom: 8px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+  h1 { font-size: clamp(24px, 4.4vw, 34px); margin: 6px 0 6px; letter-spacing: -0.02em; text-wrap: balance; }
+  .lede { color: var(--muted); font-size: 15px; max-width: 62ch; margin: 0; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 20px 0 26px; padding: 12px 14px;
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px; font-size: 13px; }
+  .legend b { font-weight: 600; }
+  .dot { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); }
+  .dot::before { content: ""; width: 11px; height: 11px; border-radius: 3px; background: var(--auto); }
+  .dot.do::before { background: var(--do); }
+  .dot.key::before { background: var(--key); }
+
+  .lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 720px) { .lanes { grid-template-columns: 1fr; } }
+
+  .lane { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .lane-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line); }
+  .os { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; flex: none; }
+  .lane.win .os { background: var(--win-soft); }
+  .lane.mac .os { background: var(--mac-soft); }
+  .lane-head h2 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+  .lane-head .file { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .lane.win .accent { color: var(--win); }
+  .lane.mac .accent { color: var(--ink); }
+
+  .prep { font-size: 12.5px; color: var(--muted); padding: 11px 18px; background: color-mix(in srgb, var(--line) 34%, transparent); }
+  .prep b { color: var(--ink); font-weight: 600; }
+
+  ol.steps { list-style: none; margin: 0; padding: 8px 18px 20px; }
+  ol.steps > li { position: relative; padding: 14px 0 14px 44px; }
+  ol.steps > li::before { counter-increment: s; content: counter(s);
+    position: absolute; left: 0; top: 13px; width: 28px; height: 28px; border-radius: 50%;
+    display: grid; place-items: center; font-size: 13px; font-weight: 700;
+    background: var(--bg); border: 1.5px solid var(--line); color: var(--muted); }
+  ol.steps { counter-reset: s; }
+  ol.steps > li:not(:last-child)::after { content: ""; position: absolute; left: 13.5px; top: 41px; bottom: -1px;
+    width: 1.5px; background: var(--line); }
+  .lane.win ol.steps > li[data-do]::before { border-color: var(--do); color: var(--do); background: var(--do-soft); }
+  .lane.mac ol.steps > li[data-do]::before { border-color: var(--do); color: var(--do); background: var(--do-soft); }
+
+  .st { font-weight: 600; font-size: 14.5px; }
+  .sd { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+  .sd code { background: color-mix(in srgb, var(--line) 45%, transparent); padding: 1px 5px; border-radius: 5px; color: var(--ink); }
+  .tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+    padding: 2px 8px; border-radius: 999px; margin-left: 2px; vertical-align: 1px; }
+  .tag.auto { background: color-mix(in srgb, var(--auto) 18%, transparent); color: var(--muted); }
+  .tag.do { background: var(--do-soft); color: var(--do); }
+  .tag.key { background: var(--key-soft); color: var(--key); }
+
+  .screen { margin-top: 9px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .screen .cap { font-size: 11.5px; color: var(--muted); padding: 6px 10px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 6px; }
+  .screen .cap::before { content: "▮"; color: var(--muted); font-size: 9px; }
+
+  /* 미니 화면: 인증키 창(윈도우) */
+  .mini { padding: 11px 12px; font-size: 11.5px; }
+  .mini.win-dialog .bar { font-weight: 600; font-size: 12px; margin-bottom: 8px; color: var(--ink); }
+  .mini .field { border: 1px solid var(--line); border-radius: 6px; height: 26px; background: var(--surface); margin: 6px 0; }
+  .mini .link { color: var(--win); font-size: 11px; }
+  .mini .btns { display: flex; gap: 6px; justify-content: flex-end; margin-top: 8px; }
+  .mini .btn { font-size: 11px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); }
+  .mini .btn.primary { background: var(--do); border-color: var(--do); color: #fff; }
+
+  /* 미니 화면: 설정 배너(맥) */
+  .mini.mac-banner .banner { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--do-soft);
+    font-size: 11.5px; color: var(--ink); }
+  .mini.mac-banner .banner b { color: var(--do); }
+  .mini.mac-banner .set { display: flex; gap: 6px; margin-top: 8px; align-items: center; }
+  .mini.mac-banner .set .field { flex: 1; margin: 0; }
+  .mini.mac-banner .set .btn { font-size: 11px; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); }
+  .mini.mac-banner .get { margin-top: 7px; font-size: 11px; padding: 5px 10px; border-radius: 6px;
+    background: var(--mac-soft); border: 1px solid var(--line); display: inline-block; }
+
+  .keyline { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 22px; }
+  @media (max-width: 720px) { .keyline { grid-template-columns: 1fr; } }
+  .keybox { border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; background: var(--key-soft); }
+  .keybox h3 { margin: 0 0 4px; font-size: 14px; }
+  .keybox p { margin: 0; font-size: 13px; color: var(--muted); }
+  .keybox .os-tag { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+  .keybox.win .os-tag { color: var(--win); }
+  .keybox.mac .os-tag { color: var(--ink); }
+
+  footer { margin-top: 26px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 14px; }
+  footer b { color: var(--ink); font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div class="eyebrow">납부 기한 알림 · 처음 설치</div>
+    <h1>첫 실행 순서 안내</h1>
+    <p class="lede">프로그램을 처음 켠 뒤, 쓸 수 있는 상태가 될 때까지의 과정입니다. Windows·macOS를 나눠 정리했습니다. 두 경우 모두 자료는 이 PC 밖으로 나가지 않습니다.</p>
+  </header>
+
+  <div class="legend">
+    <span class="dot"><b>자동</b>&nbsp;— 프로그램이 알아서 함</span>
+    <span class="dot do"><b>직접</b>&nbsp;— 사용자가 누르거나 입력</span>
+    <span class="dot key"><b>인증키</b>&nbsp;— 공휴일 자동 받기용 (없으면 나중에 넣어도 됨)</span>
+  </div>
+
+  <div class="lanes">
+    <!-- WINDOWS -->
+    <section class="lane win">
+      <div class="lane-head">
+        <div class="os">🪟</div>
+        <div>
+          <h2>Windows</h2>
+          <div class="file">누르는 파일: <code>시작하기.bat</code> <span class="accent">또는</span> <code>PaymentAlert.exe</code></div>
+        </div>
+      </div>
+      <div class="prep"><b>준비물:</b> 없음 — .NET Framework 4는 Windows 10·11에 기본 포함</div>
+      <ol class="steps">
+        <li>
+          <div class="st">폴더·자료파일 자동 생성 <span class="tag auto">자동</span></div>
+          <div class="sd"><code>data</code> 폴더와 빈 자료파일(DB)을 스스로 만듭니다.</div>
+        </li>
+        <li data-do>
+          <div class="st">인증키 창이 먼저 뜸 <span class="tag key">인증키</span></div>
+          <div class="sd">실행하자마자 <b>별도 팝업 창</b>이 뜹니다. 인증키를 붙여넣고 <b>[입력하고 받기]</b>.</div>
+          <div class="screen">
+            <div class="cap">실제 화면 — 공휴일 자료 받기 · 처음 한 번</div>
+            <div class="mini win-dialog">
+              <div class="bar">공휴일 자료 받기 — 처음 한 번</div>
+              <div>주말·공휴일을 반영해 기한을 계산하려면 인증키가 필요합니다.</div>
+              <div class="link">공공데이터포털에서 인증키 받기 (특일 정보)</div>
+              <div style="margin-top:6px">인증키</div>
+              <div class="field"></div>
+              <div class="btns"><span class="btn">나중에</span><span class="btn primary">입력하고 받기</span></div>
+            </div>
+          </div>
+        </li>
+        <li>
+          <div class="st">공휴일 자동 다운로드 <span class="tag auto">자동</span></div>
+          <div class="sd">"공휴일 자료를 받았습니다" 알림 → <b>[확인]</b>. (다음 실행부터 인증키 창은 안 뜸)</div>
+        </li>
+        <li data-do>
+          <div class="st">정리 화면에서 항목 추가 <span class="tag do">직접</span></div>
+          <div class="sd"><code>start-web.bat</code> 실행 → 브라우저에 보드 열림 → <b>[항목 관리]</b>에서 기관·비용·기한 입력.</div>
+        </li>
+      </ol>
+    </section>
+
+    <!-- MACOS -->
+    <section class="lane mac">
+      <div class="lane-head">
+        <div class="os">🍎</div>
+        <div>
+          <h2>macOS</h2>
+          <div class="file">누르는 파일: <code>정리화면 열기.command</code> (더블클릭)</div>
+        </div>
+      </div>
+      <div class="prep"><b>준비물:</b> Node.js 24 설치 · 처음 한 번 <code>chmod +x mac/*.command</code></div>
+      <ol class="steps">
+        <li>
+          <div class="st">서버 시작 <span class="tag auto">자동</span></div>
+          <div class="sd">터미널 창이 잠깐 뜨고 정리 화면 서버가 켜집니다.</div>
+        </li>
+        <li>
+          <div class="st">폴더·자료파일 자동 생성 <span class="tag auto">자동</span></div>
+          <div class="sd"><code>data</code>·<code>증빙</code>·<code>backups</code> 폴더와 빈 자료파일(DB)을 스스로 만듭니다.</div>
+        </li>
+        <li>
+          <div class="st">브라우저에 정리 화면 열림 <span class="tag auto">자동</span></div>
+          <div class="sd">상단에 <b>"자료 확인이 필요합니다 · 공휴일 자료 없음"</b> 배너가 보입니다. 인증키 창은 뜨지 않습니다.</div>
+        </li>
+        <li data-do>
+          <div class="st">설정 화면에서 인증키 입력 <span class="tag key">인증키</span></div>
+          <div class="sd"><b>별도 창이 아니라</b> <b>[설정]</b> 탭 안에서 넣습니다: 인증키 입력 → <b>[저장]</b> → <b>[지금 공휴일 받기]</b>.</div>
+          <div class="screen">
+            <div class="cap">실제 화면 — 설정 탭의 공휴일 영역</div>
+            <div class="mini mac-banner">
+              <div class="banner"><b>⚠ 자료 확인이 필요합니다</b> — 공휴일 자료가 없습니다. 설정에서 인증키를 넣으세요.</div>
+              <div class="set">
+                <div class="field"></div>
+                <span class="btn">저장</span>
+              </div>
+              <span class="get">⟳ 지금 공휴일 받기</span>
+            </div>
+          </div>
+        </li>
+        <li data-do>
+          <div class="st">정리 화면에서 항목 추가 <span class="tag do">직접</span></div>
+          <div class="sd"><b>[항목 관리]</b>에서 기관·비용·기한 입력. 차입금 이자는 ERP 엑셀을 올리면 됩니다.</div>
+        </li>
+        <li data-do>
+          <div class="st">매일 알림 켜기 <span class="tag do">직접</span></div>
+          <div class="sd"><code>자동알림 켜기.command</code> 더블클릭 → 매일 아침 9시에 알림 팝업 등록.</div>
+        </li>
+      </ol>
+    </section>
+  </div>
+
+  <div class="keyline">
+    <div class="keybox win">
+      <div class="os-tag">Windows</div>
+      <h3>인증키는 실행 즉시 별도 창</h3>
+      <p>프로그램을 켜면 인증키 팝업이 가장 먼저 뜹니다. 여기서 바로 넣거나 "나중에".</p>
+    </div>
+    <div class="keybox mac">
+      <div class="os-tag">macOS</div>
+      <h3>인증키는 설정 화면 안에서</h3>
+      <p>별도 팝업이 없습니다. 정리 화면 [설정] 탭에서 넣습니다. 나머지 흐름은 동일합니다.</p>
+    </div>
+  </div>
+
+  <footer>
+    <b>공통</b> — 인증키는 나중에 넣어도 됩니다(그동안은 주말만 반영). 자료·증빙은 이 PC의 <code>data</code> 폴더 안에만 있고, 공휴일 받기만 공공데이터포털에 연결합니다. 기존 자료를 옮기려면 <code>data</code> 폴더째 복사하면 됩니다.
+  </footer>
+</div>
+</body>
+</html>

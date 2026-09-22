@@ -740,10 +740,13 @@ namespace PaymentAlert
                 (!int.TryParse(s, NumberStyles.None, Inv, out 기대) || 기대 > Stages.FinalIndex(it)))
                 throw new HttpError(400, "단계 값이 올바르지 않습니다.");
 
+            // 기한 당일·지난 미완료 건은 한 단계 진행해도 '오늘 확인' 을 찍지 않아 납부까지 계속 알린다 (사용자 요청 2026-09-22).
+            bool 기한임박 = OccurrenceOf(env, it, y).보정기한일.Date <= env.Today.Date;
+
             try
             {
                 StatusRecord st;
-                if (동작 == "진행") st = env.Db.Advance(y, it.Id, Stages.For(it), 기대, DateTime.Now, env.Today, 출처);
+                if (동작 == "진행") st = env.Db.Advance(y, it.Id, Stages.For(it), 기대, DateTime.Now, env.Today, 출처, 기한임박);
                 else if (동작 == "대기") st = env.Db.Defer(y, it.Id, 기대, DateTime.Now, env.Today, 출처);
                 else if (동작 == "대기취소") st = env.Db.대기취소(y, it.Id, 기대, DateTime.Now, env.Today, 출처);
                 else st = env.Db.Revert(y, it.Id, Stages.For(it), 기대, DateTime.Now, 출처);

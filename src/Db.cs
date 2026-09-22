@@ -199,7 +199,7 @@ namespace PaymentAlert
     public sealed class Store : IDisposable
     {
         public const string 파일이름 = "납부알림.db";
-        public const int 스키마버전 = 5;
+        public const int 스키마버전 = 6;
 
         readonly Conn c;
         public string 파일경로 { get; private set; }
@@ -286,6 +286,25 @@ namespace PaymentAlert
             if (v < 3) c.Tx(이관3);
             if (v < 4) c.Tx(이관4);
             if (v < 5) c.Tx(이관5);
+            if (v < 6) c.Tx(이관6);
+        }
+
+        /// <summary>
+        /// 5판 → 6판. loans 의 UNIQUE(거래처, 차입일) 제약을 없앤다 (사용자 요청 2026-09-22).
+        /// 한 거래처(예: 그룹 지주사)가 여러 사업에 빌려주고 같은 날 시작하는 건도 있어, (거래처, 차입일)로는 한 건을 못 가른다.
+        /// 앞으로 같은 건인지 여부는 차입명으로 판정한다. SQLite 는 제약만 못 떼므로 표를 새로 만들어 옮긴다.
+        /// </summary>
+        void 이관6()
+        {
+            c.Run("CREATE TABLE loans_v6(" +
+                  "묶음 TEXT PRIMARY KEY, 거래처 TEXT NOT NULL, 차입일 TEXT NOT NULL, 액면 TEXT NOT NULL, " +
+                  "이율 TEXT, 만기 TEXT, 파일 TEXT NOT NULL DEFAULT '', 시트 TEXT NOT NULL DEFAULT '', 가져온일시 TEXT, " +
+                  "차입명 TEXT NOT NULL DEFAULT '', 약칭 TEXT NOT NULL DEFAULT '')");
+            c.Run("INSERT INTO loans_v6(묶음,거래처,차입일,액면,이율,만기,파일,시트,가져온일시,차입명,약칭) " +
+                  "SELECT 묶음,거래처,차입일,액면,이율,만기,파일,시트,가져온일시,차입명,약칭 FROM loans");
+            c.Run("DROP TABLE loans");
+            c.Run("ALTER TABLE loans_v6 RENAME TO loans");
+            SetMeta("schema_version", "6");
         }
 
         /// <summary>4판 → 5판. 차입건에 차입명·약칭을 더한다 (사용자 요청 2026-09-18). 화면의 차입처 자리에 약칭(없으면 차입명)을 쓴다.</summary>
@@ -621,6 +640,18 @@ namespace PaymentAlert
         }
 
         /// <summary>
+        /// 같은 거래처·차입일·차입명 으로 이미 가져온 차입건의 묶음. 없으면 null.
+        /// 한 거래처가 같은 날 여러 사업에 빌려줄 수 있어 차입명까지 봐야 한 건을 가른다 (사용자 요청 2026-09-22).
+        /// </summary>
+        public string 차입묶음(string 거래처, DateTime 차입일, string 차입명)
+        {
+            string g = null;
+            c.Each("SELECT 묶음 FROM loans WHERE 거래처=? AND 차입일=? AND 차입명=?",
+                delegate(Reader r) { g = r.Str(0); }, 거래처, D(차입일), (차입명 ?? "").Trim());
+            return g;
+        }
+
+        /// <summary>
         /// 차입건 하나를 한 트랜잭션으로 넣는다: 차입 정보, 새 회차 항목, 그 회차 금액, 변경 기록.
         /// 이미 있는 id 는 건드리지 않는다 — 진행 중인 회차를 가져오기가 덮어쓰면 안 된다.
         /// 새로 넣은 항목 id 를 돌려준다.
@@ -847,11 +878,20 @@ namespace PaymentAlert
         /// <summary>다음 지점으로 한 칸. 오늘 확인한 것으로도 표시한다.</summary>
         public StatusRecord Advance(int 연도, string id, Flow flow, int 기대단계, DateTime 지금, DateTime 오늘, string 출처)
         {
-            return Advance(연도, id, Stages.For(flow), 기대단계, 지금, 오늘, 출처);
+            return Advance(연도, id, Stages.For(flow), 기대단계, 지금, 오늘, 출처, false);
         }
 
-        /// <summary>항목의 단계 목록(사용자설정 포함)으로 한 칸 나아간다.</summary>
         public StatusRecord Advance(int 연도, string id, string[] 단계들, int 기대단계, DateTime 지금, DateTime 오늘, string 출처)
+        {
+            return Advance(연도, id, 단계들, 기대단계, 지금, 오늘, 출처, false);
+        }
+
+        /// <summary>
+        /// 항목의 단계 목록(사용자설정 포함)으로 한 칸 나아간다.
+        /// 기한임박(기한 당일·지남)인데 아직 마지막 단계가 아니면 '오늘 확인' 표시를 남기지 않는다 —
+        /// 기한 당일 한 단계만 하고 알림이 끝나 버리는 것을 막고, 납부까지 계속 밀기 위해서다 (사용자 요청 2026-09-22).
+        /// </summary>
+        public StatusRecord Advance(int 연도, string id, string[] 단계들, int 기대단계, DateTime 지금, DateTime 오늘, string 출처, bool 기한임박)
         {
             StatusRecord result = null;
             c.Tx(delegate
@@ -864,7 +904,8 @@ namespace PaymentAlert
                 int before = st.단계;
                 st.단계 = before + 1;
                 st.변경일시 = 지금;
-                st.최종확인일 = 오늘.Date;
+                // 기한 당일·지난 미완료 건은 '오늘 확인' 을 찍지 않아 계속 알린다. 그 외에는 오늘 확인으로 둔다.
+                st.최종확인일 = (기한임박 && st.단계 < last) ? (DateTime?)null : 오늘.Date;
                 상태쓰기(st);
                 기록(연도, id, "진행", before, st.단계, 출처, 단계들[st.단계]);
                 result = st;
