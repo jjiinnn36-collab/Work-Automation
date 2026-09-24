@@ -51,7 +51,7 @@ echo.
 echo ============================================
 echo   5. 웹 화면 서버 테스트
 echo ============================================
-"%CSC%" /nologo /target:exe /out:"%OUTDIR%\WebTests.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll /reference:System.IO.Compression.dll %CORE% src\WebJson.cs src\WebServer.cs src\WebServer.Features.cs src\WebServer.Loans.cs test\WebTests.cs test\WebLoanTests.cs
+"%CSC%" /nologo /target:exe /out:"%OUTDIR%\WebTests.exe" /reference:System.dll /reference:System.Core.dll /reference:System.Xml.dll /reference:System.IO.Compression.dll %CORE% src\WebJson.cs src\WebServer.cs src\WebServer.Features.cs src\WebServer.Loans.cs src\LoanDoc.cs test\WebTests.cs test\WebLoanTests.cs
 if not exist "%OUTDIR%\WebTests.exe" goto :buildfail
 "%OUTDIR%\WebTests.exe"
 set RC5=%errorlevel%

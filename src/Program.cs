@@ -384,6 +384,26 @@ namespace PaymentAlert
                         return s.Revert(o.연도, o.Item.Id, Stages.For(o.Item), row.Status.단계, DateTime.Now, "팝업");
                     }
                 };
+                // 웹 화면에서 바꾼 것을 팝업이 따라잡는다 (2초마다 번호만 확인, 달라졌을 때만 다시 읽기).
+                form.변경번호읽기 = delegate
+                {
+                    using (Store s = Store.Open(dbPath)) return s.변경번호();
+                };
+                form.상태다시읽기 = delegate
+                {
+                    using (Store s = Store.Open(dbPath))
+                    {
+                        Dictionary<string, StatusRecord> 새것 = s.LoadStatus();
+                        foreach (AlertRow r in rows)
+                        {
+                            StatusRecord st;
+                            if (!새것.TryGetValue(r.Occ.Key, out st)) continue;
+                            r.Status.단계 = st.단계;
+                            r.Status.변경일시 = st.변경일시;
+                            r.Status.최종확인일 = st.최종확인일;
+                        }
+                    }
+                };
                 form.웹열기 = 웹화면열기;
                 Application.Run(form);
 

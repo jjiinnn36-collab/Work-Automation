@@ -5,7 +5,7 @@ import { ChevronLeftIcon, ChevronRightIcon, DownloadIcon } from "lucide-react"
 
 import { downloadText, get } from "@/lib/api"
 import { occurrenceCsv, shiftMonth, sortRemaining, toCsv, won, yearStatus } from "@/lib/logic"
-import type { MonthData, Occurrence } from "@/lib/types"
+import type { MonthData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useApp } from "@/components/app/app-context"
 import { LoadError, PageHeader, StatCard } from "@/components/app/parts"
@@ -13,8 +13,6 @@ import { OccurrenceTable } from "@/components/app/pages/occurrence-table"
 import { Button } from "@/components/ui/button"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { Skeleton } from "@/components/ui/skeleton"
-
-const names = (list: Occurrence[]) => list.slice(0, 3).map((o) => o.name).join(" · ") || "없음"
 
 /** 이번 달 — 원기한이 이 달에 드는 건 (보드와 같은 기준, AC-W6). 낱말은 연간과 같다 (Q3). */
 export function MonthPage() {
@@ -33,7 +31,6 @@ export function MonthPage() {
   const progress = remaining.filter((o) => yearStatus(o) === "progress")
   const upcoming = remaining.filter((o) => yearStatus(o) === "upcoming")
   const overdue = remaining.filter((o) => yearStatus(o) === "overdue")
-  const done = data.rows.filter((o) => o.done)
 
   function exportCsv() {
     const c = occurrenceCsv(data!.rows)
@@ -68,16 +65,11 @@ export function MonthPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard label="진행중" value={data.inProgress} hint={names(progress)} />
-        <StatCard label="진행예정" value={data.upcoming} hint={names(upcoming)} />
-        <StatCard label="완료" value={data.done} hint={names(done)} />
-        <StatCard label="기한 지남" value={data.overdue} tone="danger" hint={overdue.map((o) => `${o.due.slice(5)} ${o.name}`).join(" · ") || "없음"} />
-        <StatCard
-          label="이 달 납부 합계"
-          value={won(data.total)}
-          unit="원"
-          hint={data.amountUnknown > 0 ? <span className="text-action">금액 미확인 {data.amountUnknown}건 제외</span> : "모든 금액 확인됨"}
-        />
+        <StatCard label="진행중" value={data.inProgress} />
+        <StatCard label="진행예정" value={data.upcoming} />
+        <StatCard label="완료" value={data.done} />
+        <StatCard label="기한 지남" value={data.overdue} tone="danger" />
+        <StatCard label="이 달 납부 합계" value={won(data.total)} unit="원" fit />
       </div>
 
       <section className="flex flex-col gap-3">

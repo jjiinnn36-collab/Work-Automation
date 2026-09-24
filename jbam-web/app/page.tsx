@@ -66,20 +66,58 @@ export default function Page() {
     return () => window.removeEventListener("hashchange", sync)
   }, [])
 
-  // 팝업에서 바꾼 것이 늦게 보이지 않게: 돌아왔을 때와 1분마다 다시 읽는다.
+  // 팝업이나 다른 탭에서 바꾼 것을 곧바로 반영한다.
+  // 전체를 계속 다시 읽지 않고 /api/seq 의 번호만 견주어, 달라졌을 때만 다시 읽는다.
+  const seqRef = React.useRef<number | null>(null)
+  const [syncPending, setSyncPending] = React.useState(false)
+
+  // 창(입력·확인)이 하나라도 열려 있으면 화면을 건드리지 않는다 —
+  // 쓰는 도중에 목록이 바뀌면 엉뚱한 것을 누르게 된다. 닫힐 때 한꺼번에 반영한다.
+  const dialogOpen =
+    amountFor !== null || groupFor !== null || docsFor !== null ||
+    eventsFor !== null || itemFor !== null || confirmState !== null
+  const dialogOpenRef = React.useRef(dialogOpen)
+  React.useEffect(() => { dialogOpenRef.current = dialogOpen }, [dialogOpen])
+
   React.useEffect(() => {
-    const onVisible = () => {
-      if (document.visibilityState === "visible") refresh()
+    let alive = true
+    const check = async () => {
+      if (document.visibilityState !== "visible") return
+      try {
+        const r = await get<{ seq: number }>("/api/seq")
+        if (!alive) return
+        if (seqRef.current === null) { seqRef.current = r.seq; return }
+        if (r.seq === seqRef.current) return
+        seqRef.current = r.seq
+        if (dialogOpenRef.current) setSyncPending(true)
+        else refresh()
+      } catch {
+        // 서버가 잠깐 멈췄을 수 있다. 다음 차례에 다시 본다.
+      }
     }
+    const onVisible = () => { if (document.visibilityState === "visible") check() }
     document.addEventListener("visibilitychange", onVisible)
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") refresh()
-    }, 60_000)
+    const timer = setInterval(check, 3_000)
+    check()
     return () => {
+      alive = false
       document.removeEventListener("visibilitychange", onVisible)
       clearInterval(timer)
     }
   }, [refresh])
+
+  // 방금 우리가 다시 읽었으면 그 시점 번호로 맞춰 둔다 — 같은 변경으로 두 번 읽지 않게.
+  React.useEffect(() => {
+    get<{ seq: number }>("/api/seq").then((r) => { seqRef.current = r.seq }).catch(() => {})
+  }, [version])
+
+  // 창을 닫는 순간, 열려 있는 동안 밀어 둔 변경을 반영한다.
+  React.useEffect(() => {
+    if (dialogOpen || !syncPending) return
+    setSyncPending(false)
+    refresh()
+    toast.add({ title: "다른 곳에서 바뀐 내용을 반영했습니다", type: "info" })
+  }, [dialogOpen, syncPending, refresh])
 
   React.useEffect(() => {
     get<AlertsData>("/api/alerts")

@@ -11,6 +11,7 @@ import type { Item, ItemsData } from "@/lib/types"
 import { useLoad } from "@/hooks/use-load"
 import { useRowDrag } from "@/hooks/use-row-drag"
 import { useApp } from "@/components/app/app-context"
+import { LoanDeleteDialog } from "@/components/app/dialogs/loan-delete-dialog"
 import { LoanImportDialog, type LoanExtendTarget } from "@/components/app/dialogs/loan-import-dialog"
 import { LoadError, None, OrgName, PageHeader } from "@/components/app/parts"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -29,6 +30,7 @@ export function ItemsPage() {
   const app = useApp()
   const { data, error } = useLoad(() => get<ItemsData>("/api/items"), [app.version])
   const [extend, setExtend] = React.useState<LoanExtendTarget | null>(null)
+  const [delLoan, setDelLoan] = React.useState<string | null>(null)
   // 끌어 옮긴 순서를 서버 응답 전에 먼저 보여 준다. 새 목록이 오면 버린다.
   const [order, setOrder] = React.useState<string[] | null>(null)
   React.useEffect(() => setOrder(null), [data])
@@ -57,9 +59,13 @@ export function ItemsPage() {
   const year = data.today.slice(0, 4)
 
   async function remove(it: Item) {
+    // 차입 회차는 자동으로 만들어진 것이라 안내가 다르다 (사용자 결정 2026-09-23, ㄱ안):
+    // 차입건과 원본 스케줄은 남고, 같은 엑셀을 다시 가져오면 되살아난다. 대신 고쳐 둔 금액은 엑셀 값으로 돌아간다.
     const yes = await app.confirm({
-      title: `'${it.name}' 항목을 지울까요?`,
-      description: "목록과 알림에서 빠집니다. 진행 기록·금액·증빙은 기록으로 남습니다.",
+      title: `'${it.name}' ${it.loan ? "회차를" : "항목을"} 지울까요?`,
+      description: it.loan
+        ? "이 회차만 빠집니다. 차입건과 원본 스케줄은 그대로 남고, 같은 엑셀을 다시 가져오면 되살아납니다 — 이때 손으로 고친 금액은 엑셀 값으로 돌아가고 목록 맨 뒤로 갑니다."
+        : "목록과 알림에서 빠집니다. 진행 기록·금액·증빙은 기록으로 남습니다.",
       action: "지우기",
       destructive: true,
     })
@@ -184,8 +190,13 @@ export function ItemsPage() {
                           )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem variant="destructive" onClick={() => remove(it)}>
-                            <Trash2Icon /> 삭제
+                            <Trash2Icon /> {it.loan ? "이 회차만 삭제" : "삭제"}
                           </DropdownMenuItem>
+                          {it.loan && it.group && (
+                            <DropdownMenuItem variant="destructive" onClick={() => setDelLoan(it.group)}>
+                              <Trash2Icon /> 차입건 전체 삭제
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -208,6 +219,7 @@ export function ItemsPage() {
         </div>
       )}
       <LoanImportDialog open={extend !== null} onOpenChange={(v) => !v && setExtend(null)} extend={extend} />
+      <LoanDeleteDialog group={delLoan} open={delLoan !== null} onOpenChange={(v) => !v && setDelLoan(null)} />
     </div>
   )
 }

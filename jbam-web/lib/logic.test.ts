@@ -4,7 +4,7 @@ import assert from "node:assert/strict"
 
 import {
   won, md, parseWon, stepStates, stepTooltip, yearStatus, sortRemaining, matchYearFilter,
-  shiftMonth, presetRange, parseMonths, groupSum, previewKind, csvCell, toCsv, safeUrl,
+  shiftMonth, presetRange, parseMonths, groupSum, previewKind, parseCsv, csvCell, toCsv, safeUrl,
   viewFromHash, eventSummary, occurrenceCsv, FLOW_CARDS, flowLabel, dayLabel, itemSummary, settingsConfirm, discardConfirm, amountOverwrite, groupOverwrites, overwriteConfirm,
   yearRange, loanKey, loanDefaultKeys, loanSaveSheets, loanBasis, loanOverrides, loanNameParams, visibleSteps, progressText,
 } from "./logic.ts"
@@ -109,6 +109,18 @@ test("미리보기 형식 (AC-W105·W106)", () => {
   assert.equal(previewKind("영수증.jpeg"), "image")
   assert.equal(previewKind("산출내역.xlsx"), "none")
   assert.equal(previewKind("신고서.hwp"), "none")
+  // 차입 원본 스케줄은 CSV 라 창 안에서 표로 본다 (사용자 결정 2026-09-23).
+  assert.equal(previewKind("충북 진천 물류단지.csv"), "csv")
+})
+
+test("차입 원본 CSV 읽기: BOM·감싸기·수식 막기 되돌리기", () => {
+  const 글 = "﻿기준일자,현금흐름구분,액면이자금액\r\n2026-06-23,이자지급,\"12,340,000\"\r\n'=SUM(A1),메모,0\r\n"
+  const rows = parseCsv(글)
+  assert.deepEqual(rows[0], ["기준일자", "현금흐름구분", "액면이자금액"])
+  assert.deepEqual(rows[1], ["2026-06-23", "이자지급", "12,340,000"])
+  // 쓸 때 붙인 앞따옴표는 떼어 원래 값으로 보여 준다.
+  assert.deepEqual(rows[2], ["=SUM(A1)", "메모", "0"])
+  assert.equal(rows.length, 3)
 })
 
 test("CSV: BOM, 수식 막기, 감싸기 (AC-W16)", () => {
@@ -206,10 +218,12 @@ test("차입 스케줄 가져오기: 유효연도 표시·기본 선택·근거 
   ]
   const b = [{ sheet: "차입처A", ok: true, newCount: 1 }]
   const keys = loanDefaultKeys([{ file: "a.xlsx", loans: a }, { file: "b.csv", loans: b }])
-  assert.deepEqual(keys, [loanKey("a.xlsx", "차입처A"), loanKey("b.csv", "차입처A")])
+  // 이미 다 등록된 시트도 골라 둔다 — 같은 파일을 다시 올려 원본 스케줄만 증빙에 채울 수 있어야 한다
+  // (사용자 요청 2026-09-23). 읽지 못한 시트(ok:false)만 뺀다.
+  assert.deepEqual(keys, [loanKey("a.xlsx", "차입처A"), loanKey("a.xlsx", "이미 넣음"), loanKey("b.csv", "차입처A")])
   assert.notEqual(loanKey("a.xlsx", "차입처A"), loanKey("b.csv", "차입처A"))
-  assert.deepEqual(loanSaveSheets("a.xlsx", a, keys), ["차입처A"])
-  assert.deepEqual(loanSaveSheets("a.xlsx", a, [loanKey("a.xlsx", "이미 넣음")]), [])
+  assert.deepEqual(loanSaveSheets("a.xlsx", a, keys), ["차입처A", "이미 넣음"])
+  assert.deepEqual(loanSaveSheets("a.xlsx", a, [loanKey("a.xlsx", "이미 넣음")]), ["이미 넣음"])
   assert.deepEqual(loanSaveSheets("b.csv", b, [loanKey("a.xlsx", "차입처A")]), [])
 
   assert.equal(loanBasis([{ date: "2026-09-30", amount: 4660274 }, { date: "2026-12-04", amount: 560959 }]), "9/30 4,660,274 + 12/4 560,959")

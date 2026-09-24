@@ -150,10 +150,8 @@ namespace PaymentAlert.Tests
             Lacks("미리보기는 저장 안 함", Get("/api/items").Text, "차입처A");
             Lacks("미리보기 결과에 계좌 열 값 없음", r.Text, "지급계좌");
 
-            r = 올리기("?mode=save", xlsx, "차입 스케줄.xlsx");
-            Check("새 차입건은 차입명이 없으면 400", r.Status, 400);
-            Has("차입명 안내", r.Text, "차입명을 넣어 주세요");
-            Lacks("차입명 없이는 저장 안 함", Get("/api/items").Text, "차입금 이자");
+            // 차입명을 안 보내면 시트명을 차입명으로 쓴다 (사용자 요청 2026-09-22).
+            Has("차입명 자리에 시트명", r.Text, "\"name\":\"차입처A\"");
             Check("차입명이 너무 길면 400", 올리기("?mode=save&nm=" + E("차입처A|" + new string('가', 61) + "|"), xlsx, "차입 스케줄.xlsx").Status, 400);
 
             r = 올리기("?mode=save&nm=" + E("차입처A|가짜 차입|가짜PF"), xlsx, "차입 스케줄.xlsx");
@@ -259,7 +257,70 @@ namespace PaymentAlert.Tests
             r = 올리기("?mode=save", 엑셀(시트("신규없음", noNew)), "b.xlsx");
             Has("오류 시트는 저장 안 함", r.Text, "\"added\":0");
 
+            차입원본증빙(group, xlsx);
             연장스케줄업로드(group);
+            차입건삭제(group);
+        }
+
+        /// <summary>
+        /// 차입 원본 스케줄 증빙 (사용자 결정 2026-09-23).
+        /// 사업건마다 CSV 한 부를 차입건에 붙이고, 회차 어디서 열어도 보이며, 차입건을 지우면 함께 지워진다.
+        /// </summary>
+        static void 차입원본증빙(string group, byte[] xlsx)
+        {
+            string 회차 = group + "-202612";
+            Res a = Get("/api/attachments?y=2026&id=" + 회차);
+            Check("증빙 목록 200", a.Status, 200);
+            Has("이 차입건이 달려 있음", a.Text, "\"loanGroup\":\"" + group + "\"");
+            Has("원본 스케줄 한 부", a.Text, "\"name\":\"가짜 차입.csv\"");
+
+            // 바로 앞과 내용이 같으면 새로 쌓지 않는다 (같은 파일을 여러 번 올려도 한 부).
+            올리기("?mode=save", xlsx, "차입 스케줄.xlsx");
+            int 먼저 = 원본부수(group);
+            올리기("?mode=save", xlsx, "차입 스케줄.xlsx");
+            Check("같은 내용은 새로 안 쌓임", 원본부수(group), 먼저);
+            CheckTrue("원본이 한 부 이상 있다", 먼저 >= 1);
+
+            // 다른 회차에서 열어도 같은 원본이 보인다.
+            Has("2027 회차에서도 같은 원본", Get("/api/attachments?y=2027&id=" + group + "-202709").Text, "\"name\":\"가짜 차입.csv\"");
+            // 차입이 아닌 항목에는 붙지 않는다.
+            Has("일반 항목은 차입건 없음", Get("/api/attachments?y=2026&id=kofia").Text, "\"loanGroup\":null");
+
+            Res s = Get("/api/loan/summary?group=" + group);
+            Check("요약 200", s.Status, 200);
+            Has("회차 4건", s.Text, "\"items\":4");
+            Check("없는 차입건 요약은 404", Get("/api/loan/summary?group=item-9999").Status, 404);
+        }
+
+        /// <summary>이 차입건에 쌓인 원본 스케줄 부수.</summary>
+        static int 원본부수(string group)
+        {
+            string t = Get("/api/loan/summary?group=" + group).Text;
+            const string key = "\"docs\":";
+            int i = t.IndexOf(key, StringComparison.Ordinal);
+            if (i < 0) return -1;
+            int j = i + key.Length, n = 0;
+            while (j < t.Length && t[j] >= '0' && t[j] <= '9') { n = n * 10 + (t[j] - '0'); j++; }
+            return n;
+        }
+
+        /// <summary>차입건 삭제 (ㄷ안): 기본은 금액·진행을 남기고 차입건·회차·원본 파일만 지운다.</summary>
+        static void 차입건삭제(string group)
+        {
+            string 회차 = group + "-202612";
+            Res d = Post("/api/loan/delete", "group=" + group);
+            Check("삭제 200", d.Status, 200);
+            Has("기록은 남김", d.Text, "\"purged\":false");
+            Has("원본 파일도 지움", d.Text, "\"docs\":4");
+            Lacks("차입 목록에서 빠짐", Get("/api/loans").Text, "\"group\":\"" + group + "\"");
+            Lacks("항목에서도 빠짐", Get("/api/items").Text, "\"id\":\"" + 회차 + "\"");
+            using (Store db = Store.Open(DataPaths.Db(DataDir)))
+            {
+                CheckTrue("금액은 남아 있다 (다시 가져오면 이어지게)", db.LoadAmounts().ContainsKey("2026\t" + 회차));
+                CheckTrue("원본 목록도 비었다", db.차입원본목록(group).Count == 0);
+                CheckTrue("무엇을 지웠는지는 기록에 남는다", db.LoadEvents(2026, group).Count > 0);
+            }
+            Check("이미 지운 차입건은 404", Post("/api/loan/delete", "group=" + group).Status, 404);
         }
 
         /// <summary>차입처A 1차 연장: 2027-09-03 시작, 4.5%, 분기 16,875,000. 두 분기만.</summary>

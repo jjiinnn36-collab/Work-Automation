@@ -4,6 +4,7 @@ const D = require("./dates");
 const SR = require("./sheetreader");
 const LS = require("./loanschedule");
 const { Store } = require("./store");
+const LD = require("./loan-doc");
 const { HttpError, 연도 } = require("./api");
 
 const 출처 = "웹";
@@ -141,7 +142,7 @@ function 연장확인(plan, 대상) {
   return list;
 }
 
-function importLoans(env, sp, rawName, buf) {
+function importLoans(env, sp, rawName, buf, dataDir) {
   const mode = sp.get("mode") || "preview";
   if (mode !== "preview" && mode !== "save") throw new HttpError(400, "mode 는 preview 또는 save 여야 합니다.");
   if (!rawName) throw new HttpError(400, "파일 이름이 없습니다.");
@@ -210,6 +211,15 @@ function importLoans(env, sp, rawName, buf) {
     // 차입명이 비면 시트명을 차입명으로 쓴다 (사용자 요청 2026-09-22).
     if (!job.Plan.차입명 || job.Plan.차입명.trim().length === 0) job.Plan.차입명 = (job.Sheet.이름 || "").trim();
     job.묶음 = env.Db.차입묶음이름(job.Plan.거래처, job.Plan.차입일, job.Plan.차입명);
+    // 이름을 안 보냈으면 시트로도 되찾는다 — 이름을 바꿔 둔 차입건에 같은 파일을 다시 올렸을 때
+    // 새 차입건이 하나 더 생기면 안 된다. 되찾았으면 그 차입건의 이름을 그대로 잇는다.
+    if (job.묶음 == null && !nm) {
+      job.묶음 = env.Db.차입묶음시트(job.Plan.거래처, job.Plan.차입일, job.Sheet.이름);
+      if (job.묶음 != null) {
+        for (const 있던 of env.Db.차입목록())
+          if (있던.묶음 === job.묶음) { job.Plan.차입명 = 있던.차입명; job.Plan.약칭 = 있던.약칭; }
+      }
+    }
   }
 
   for (const job of 할일) {
@@ -241,6 +251,8 @@ function importLoans(env, sp, rawName, buf) {
       있던회차 += items.length - added.length;
       dto = 차입Dto(env, plan, 묶음, 앞회차);
       dto.group = 묶음; dto.added = added.length;
+      // 이 사업건 시트만 떼어 원본 스케줄로 보관한다 — 차입건에 한 부, 직전과 같은 내용이면 새로 만들지 않는다.
+      dto.doc = LD.원본보관(env, dataDir, 묶음, sheet, plan, new Date());
     }
     if (job.Checks) dto.checks = job.Checks;
     dto.selected = 선택됨;

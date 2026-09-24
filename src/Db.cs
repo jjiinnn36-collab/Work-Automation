@@ -135,15 +135,33 @@ namespace PaymentAlert
         public int Run(string sql, params object[] args)
         {
             IntPtr st = Prepare(sql);
+            int 바뀐수;
             try
             {
                 Bind(st, args);
                 int rc = Sqlite.sqlite3_step(st);
                 if (rc != Sqlite.DONE && rc != Sqlite.ROW)
                     throw new InvalidOperationException("SQL 실행 실패: " + Err() + " — " + sql);
-                return Sqlite.sqlite3_changes(db);
+                바뀐수 = Sqlite.sqlite3_changes(db);
             }
             finally { Sqlite.sqlite3_finalize(st); }
+
+            // 트랜잭션 밖에서 혼자 쓰는 문장도 번호를 올려야 다른 창이 알아챈다.
+            // 트랜잭션 안이면 끝에서 한 번만 올린다 (한 번의 변경 = 한 번의 증가).
+            if (!트랜잭션중 && !번호올리는중 && 바꾸는문장(sql)) 변경번호올리기();
+            return 바뀐수;
+        }
+
+        /// <summary>자료를 바꾸는 문장인지 (첫 낱말만 본다). BEGIN·COMMIT·PRAGMA 는 아니다.</summary>
+        static bool 바꾸는문장(string sql)
+        {
+            if (sql == null) return false;
+            int i = 0;
+            while (i < sql.Length && char.IsWhiteSpace(sql[i])) i++;
+            if (sql.Length - i < 6) return false;
+            return string.Compare(sql, i, "INSERT", 0, 6, StringComparison.OrdinalIgnoreCase) == 0
+                || string.Compare(sql, i, "UPDATE", 0, 6, StringComparison.OrdinalIgnoreCase) == 0
+                || string.Compare(sql, i, "DELETE", 0, 6, StringComparison.OrdinalIgnoreCase) == 0;
         }
 
         public void Each(string sql, RowHandler h, params object[] args)
@@ -165,15 +183,43 @@ namespace PaymentAlert
         /// 한 트랜잭션으로 묶는다. IMMEDIATE 로 시작해 쓰기 잠금을 먼저 잡으므로,
         /// 두 프로세스가 같은 행을 읽고 고쳐 쓰다 한쪽 변경이 사라지는 일이 없다.
         /// </summary>
+        bool 트랜잭션중;
+        bool 번호올리는중;
+
         public void Tx(Action body)
         {
             Run("BEGIN IMMEDIATE");
-            try { body(); Run("COMMIT"); }
+            트랜잭션중 = true;
+            try
+            {
+                body();
+                변경번호올리기();
+                트랜잭션중 = false;
+                Run("COMMIT");
+            }
             catch
             {
+                트랜잭션중 = false;
                 try { Run("ROLLBACK"); } catch { }
                 throw;
             }
+        }
+
+        /// <summary>
+        /// 자료가 바뀔 때마다 1 씩 오르는 번호. 팝업과 웹 화면이 서로의 변경을 알아채는 데 쓴다.
+        /// 스키마를 처음 만드는 중이라 meta 가 아직 없으면 조용히 건너뛴다.
+        /// </summary>
+        void 변경번호올리기()
+        {
+            if (번호올리는중) return;
+            번호올리는중 = true;
+            try
+            {
+                Run("INSERT INTO meta(key,value) VALUES('change_seq','1') " +
+                    "ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1");
+            }
+            catch { }
+            finally { 번호올리는중 = false; }
         }
 
         public void Dispose()
@@ -430,6 +476,16 @@ namespace PaymentAlert
             else c.Run("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", key, value);
         }
 
+        /// <summary>
+        /// 자료가 바뀔 때마다 오르는 번호. 팝업·웹이 이 숫자만 견주어
+        /// 바뀐 것이 있을 때만 전체를 다시 읽는다 (없으면 0).
+        /// </summary>
+        public long 변경번호()
+        {
+            long n;
+            return long.TryParse(GetMeta("change_seq"), out n) ? n : 0;
+        }
+
         // ── 납부 항목 ──
         const string 항목칸 = "id,기관,비용명,진행흐름,월,말일,일,알림영업일,금액규칙,고정금액,비고,홈페이지명,홈페이지주소,묶음,단계정의,금액없음,시작연도,종료연도";
         const string 항목자리 = "?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?";
@@ -648,6 +704,18 @@ namespace PaymentAlert
             string g = null;
             c.Each("SELECT 묶음 FROM loans WHERE 거래처=? AND 차입일=? AND 차입명=?",
                 delegate(Reader r) { g = r.Str(0); }, 거래처, D(차입일), (차입명 ?? "").Trim());
+            return g;
+        }
+
+        /// <summary>
+        /// 같은 거래처·차입일에 이 시트에서 가져온 차입건의 묶음. 없으면 null.
+        /// 이름을 따로 안 보내고 같은 파일을 다시 올렸을 때, 그 사이 이름을 바꿔 둔 차입건을 되찾는 데 쓴다.
+        /// </summary>
+        public string 차입묶음시트(string 거래처, DateTime 차입일, string 시트)
+        {
+            string g = null;
+            c.Each("SELECT 묶음 FROM loans WHERE 거래처=? AND 차입일=? AND 시트=?",
+                delegate(Reader r) { g = r.Str(0); }, 거래처, D(차입일), (시트 ?? "").Trim());
             return g;
         }
 
@@ -1120,6 +1188,91 @@ namespace PaymentAlert
                     list.Add(a);
                 });
             return list;
+        }
+
+        // ── 차입 원본 스케줄 ── (사용자 결정 2026-09-23)
+        public const string 차입원본종류 = "차입원본";
+
+        /// <summary>
+        /// 차입 원본 스케줄 한 부를 증빙 목록에 넣는다. id 는 회차가 아니라 차입건(묶음)이다.
+        /// AddAttachment 는 종류를 증빙/받은문서로 고쳐 버리므로 여기서 따로 넣는다.
+        /// </summary>
+        public void 차입원본추가(int 연도, string 묶음, string 저장파일, string 원본파일명, DateTime 일시)
+        {
+            c.Run("INSERT INTO attachments(연도,id,단계,저장파일,원본파일명,첨부일시,종류) VALUES(?,?,?,?,?,?,?)",
+                연도, 묶음, "", 저장파일, 원본파일명 ?? "", DT(일시), 차입원본종류);
+        }
+
+        /// <summary>이 차입건의 원본 스케줄 (최신 먼저).</summary>
+        public List<Attachment> 차입원본목록(string 묶음)
+        {
+            var list = new List<Attachment>();
+            c.Each("SELECT 연도,id,단계,저장파일,원본파일명,첨부일시,종류 FROM attachments WHERE id=? AND 종류=? ORDER BY rid DESC",
+                delegate(Reader r)
+                {
+                    var a = new Attachment();
+                    a.연도 = r.Int(0);
+                    a.Id = r.Str(1);
+                    a.단계 = r.Str(2);
+                    a.저장파일 = r.Str(3);
+                    a.원본파일명 = r.Str(4);
+                    DateTime? d = r.Date(5);
+                    a.첨부일시 = d.HasValue ? d.Value : DateTime.MinValue;
+                    a.종류 = r.Str(6);
+                    list.Add(a);
+                }, 묶음, 차입원본종류);
+            return list;
+        }
+
+        /// <summary>이 차입건의 원본 스케줄 목록을 통째로 지운다 (파일은 부르는 쪽에서 지운다).</summary>
+        public void 차입원본지우기(string 묶음)
+        {
+            c.Run("DELETE FROM attachments WHERE id=? AND 종류=?", 묶음, 차입원본종류);
+        }
+
+        /// <summary>이 id 에 달린 행 수. 표 이름은 코드가 정한 값(amounts·status·events)만 넘긴다.</summary>
+        public int 행수(string 표, string id)
+        {
+            int n = 0;
+            c.Each("SELECT COUNT(*) FROM " + 표 + " WHERE id=?", delegate(Reader r) { n = r.Int(0); }, id);
+            return n;
+        }
+
+        /// <summary>이 id 에 직접 붙인 증빙 수 (차입 원본은 뺀다).</summary>
+        public int 증빙수(string id)
+        {
+            int n = 0;
+            c.Each("SELECT COUNT(*) FROM attachments WHERE id=? AND 종류<>?",
+                delegate(Reader r) { n = r.Int(0); }, id, 차입원본종류);
+            return n;
+        }
+
+        /// <summary>
+        /// 차입건 하나를 통째로 지운다 (사용자 결정 2026-09-23, ㄷ안).
+        /// 기본은 다른 항목 삭제와 같게 금액·진행·변경기록을 남긴다 — 실수로 지웠다가 다시 가져오면 이어지도록.
+        /// 기록까지 가 켜져 있을 때만 그것도 지운다. 회차에 직접 붙인 증빙은 어느 쪽이든 남긴다.
+        /// 지운 [금액, 진행, 기록] 수를 돌려준다.
+        /// </summary>
+        public int[] 차입삭제(string 묶음, List<string> ids, bool 기록까지, int 연도, string 내용)
+        {
+            int 금액 = 0, 진행 = 0, 변경 = 0;
+            c.Tx(delegate
+            {
+                c.Run("DELETE FROM attachments WHERE id=? AND 종류=?", 묶음, 차입원본종류);
+                c.Run("DELETE FROM items WHERE 묶음=?", 묶음);
+                if (기록까지)
+                    foreach (string id in ids)
+                    {
+                        금액 += c.Run("DELETE FROM amounts WHERE id=?", id);
+                        진행 += c.Run("DELETE FROM status WHERE id=?", id);
+                        변경 += c.Run("DELETE FROM events WHERE id=?", id);
+                    }
+                c.Run("DELETE FROM loans WHERE 묶음=?", 묶음);
+                // 무엇을 지웠는지는 남긴다 — 차입건 자체가 사라져도 흔적은 있어야 한다.
+                기록(연도, 묶음, "차입삭제", null, null, "웹", 내용);
+                SetMeta("master_updated_at", DT(DateTime.Now));
+            });
+            return new int[] { 금액, 진행, 변경 };
         }
 
         public void AddAttachment(Attachment a)

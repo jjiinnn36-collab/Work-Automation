@@ -105,6 +105,8 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
   const [more, setMore] = React.useState(false)
   const [snapshot, setSnapshot] = React.useState("")
   const [kind, setKind] = React.useState<"pick" | "normal">("normal")
+  // 차입 회차는 ERP 스케줄에서 만들어진 것이라 홈페이지가 없다 — 칸을 아예 내보내지 않는다 (사용자 요청 2026-09-23).
+  const 차입 = Boolean(item && item.loan)
 
   React.useEffect(() => {
     if (!open) return
@@ -116,8 +118,8 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
     setSource("")
     setError(null)
     setKind(item ? "normal" : "pick")
-    // 홈페이지·비고에 이미 값이 있으면 펼친 채로 연다.
-    setMore(Boolean(item && (item.siteName || item.siteUrl || item.memo)))
+    // 홈페이지·비고에 이미 값이 있으면 펼친 채로 연다 (차입 회차는 비고만 본다).
+    setMore(Boolean(item && (item.loan ? item.memo : item.siteName || item.siteUrl || item.memo)))
   }, [open, item, app.today])
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => {
@@ -538,20 +540,22 @@ export function ItemDialog({ item, open, onOpenChange }: { item: Item | null; op
                 className="inline-flex w-fit items-center gap-1.5 rounded-md text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               >
                 <ChevronRightIcon className={cn("size-4 text-muted-foreground transition-transform motion-reduce:transition-none", more && "rotate-90")} />
-                더 보기 <span className="font-normal text-muted-foreground">홈페이지 · 비고 (선택)</span>
+                더 보기 <span className="font-normal text-muted-foreground">{차입 ? "비고 (선택)" : "홈페이지 · 비고 (선택)"}</span>
               </button>
               {more && (
                 <div id="it-more" className="flex flex-col gap-3">
-                  <div className="grid grid-cols-[1fr_1.4fr] gap-3">
-                    <Field>
-                      <FieldLabel htmlFor="it-site-name">홈페이지 이름</FieldLabel>
-                      <Input id="it-site-name" maxLength={40} placeholder="예: 홈택스" value={f.siteName} onChange={(e) => set("siteName", e.target.value)} />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor="it-site-url">주소</FieldLabel>
-                      <Input id="it-site-url" type="url" placeholder="https://" value={f.siteUrl} onChange={(e) => set("siteUrl", e.target.value)} />
-                    </Field>
-                  </div>
+                  {!차입 && (
+                    <div className="grid grid-cols-[1fr_1.4fr] gap-3">
+                      <Field>
+                        <FieldLabel htmlFor="it-site-name">홈페이지 이름</FieldLabel>
+                        <Input id="it-site-name" maxLength={40} placeholder="예: 홈택스" value={f.siteName} onChange={(e) => set("siteName", e.target.value)} />
+                      </Field>
+                      <Field>
+                        <FieldLabel htmlFor="it-site-url">주소</FieldLabel>
+                        <Input id="it-site-url" type="url" placeholder="https://" value={f.siteUrl} onChange={(e) => set("siteUrl", e.target.value)} />
+                      </Field>
+                    </div>
+                  )}
                   <Field>
                     <FieldLabel htmlFor="it-memo">비고</FieldLabel>
                     <Textarea id="it-memo" rows={2} maxLength={200} value={f.memo} onChange={(e) => set("memo", e.target.value)} />

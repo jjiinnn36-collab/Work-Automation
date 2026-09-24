@@ -229,6 +229,7 @@ export function LoanImportDialog({
     setError(null)
     let added = 0
     let popup = false
+    let 보관 = 0     // 증빙에 새로 보관한 원본 스케줄 수
     try {
       for (const p of plan) {
         const r = await upload<LoanImportResult>(
@@ -238,14 +239,21 @@ export function LoanImportDialog({
         )
         added += r.added ?? 0
         popup = popup || r.popup === true
+        보관 += (r.loans ?? []).filter((l) => l.doc === "새로").length
       }
+      // 새 회차가 없어도 원본 스케줄은 보관된다 — 같은 파일을 다시 올려 증빙만 채우는 경우.
+      const 보관말 = 보관 > 0 ? `원본 스케줄 ${보관}건을 증빙에 보관했습니다.` : undefined
       toast.add({
         title: extend
           ? `${extend.org} 연장 이자 ${added}건을 붙였습니다`
-          : `차입금 이자 ${added}건을 등록했습니다`,
+          : added > 0
+            ? `차입금 이자 ${added}건을 등록했습니다`
+            : `원본 스케줄 ${보관}건을 증빙에 보관했습니다`,
         description: popup
           ? "오늘 알릴 건이 있어 알림 팝업을 띄웠습니다."
-          : undefined,
+          : added > 0
+            ? 보관말
+            : undefined,
         type: "success",
       })
       onOpenChange(false)
@@ -342,11 +350,11 @@ export function LoanImportDialog({
           </Button>
           <Button
             type="button"
-            disabled={saving || reading || plan.length === 0 || newTotal === 0}
+            disabled={saving || reading || plan.length === 0}
             onClick={save}
           >
             {saving && <Spinner />}{" "}
-            {extend ? "연장 등록" : "등록"}
+            {extend ? "연장 등록" : newTotal === 0 ? "원본 보관" : "등록"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -479,8 +487,7 @@ function LoanCard({
             <Checkbox
               id={id}
               className="mt-8"
-              checked={checked && canAdd}
-              disabled={!canAdd}
+              checked={checked}
               onCheckedChange={(v) => onToggle(v === true)}
               aria-label={`${names.name || loan.org} 등록`}
             />
@@ -514,7 +521,7 @@ function LoanCard({
           </div>
           {!canAdd && (
             <Badge variant="outline" className="mt-8">
-              모두 등록됨
+              회차 모두 등록됨 · 원본만 보관
             </Badge>
           )}
         </div>

@@ -36,35 +36,50 @@ export function PageHeader({ title, description, actions }: { title: string; des
 
 /** 집계 칸. 0 건이면 조용히, 경고 칸은 건수가 있을 때만 빨갛게 (AC-W57, W79). */
 export function StatCard({
-  label, value, unit = "건", hint, tone = "default", fit = false,
+  label, value, unit = "건", tone = "default", fit = false,
 }: {
-  label: string; value: number | string; unit?: string; hint?: React.ReactNode; tone?: "default" | "danger" | "action"
-  /** 긴 값(날짜 범위 등)을 한 줄에 맞춰 글자만 줄인다 — 카드 높이는 그대로 (사용자 요청 2026-09-18). */
+  label: string; value: number | string; unit?: string; tone?: "default" | "danger" | "action"
+  /**
+   * 긴 값(금액·날짜 범위)을 한 줄에 맞춰 글자만 줄인다 — 카드 높이는 그대로 (사용자 요청 2026-09-18).
+   * 글자 크기를 칸 너비와 글자 수로 함께 정하므로, 금액이 길어져도 좌우 여백이 그대로 남는다 (사용자 요청 2026-09-23).
+   */
   fit?: boolean
 }) {
   const zero = value === 0
   const danger = tone === "danger" && !zero
   const action = tone === "action" && !zero
+  const 글 = typeof value === "number" ? won(value) : value
+
+  // 칸 너비(100cqi = CardHeader 의 좌우 여백을 뺀 안쪽 너비)를 글자 수로 나눠 글자 크기를 정한다.
+  // 0.55 는 '427,313,089' 처럼 쉼표가 섞인 숫자 한 글자의 평균 가로폭(em)을 실제로 재어 잡은 값이고,
+  // 글꼴이 없는 PC 에서 대체 글꼴로 조금 넓어져도 넘치지 않도록 넉넉히 잡았다.
+  // 단위('원')는 크기가 고정이라 그 폭만큼 미리 뺀다.
+  const 글자수 = Math.max(4, String(글).length * 0.55)
+  const 글자크기 = fit
+    ? `clamp(0.75rem, calc((100cqi - ${unit ? "1.25rem" : "0.25rem"}) / ${글자수.toFixed(2)}), 1.875rem)`
+    : undefined
+
   return (
-    <Card size="sm" className={cn(danger && "ring-destructive/40", fit && "@container")}>
+    <Card size="sm" className={cn(danger && "ring-destructive/40")}>
       <CardHeader>
         <CardDescription className={cn(danger && "text-destructive", action && "text-action")}>{label}</CardDescription>
         {/* CardTitle 은 작은 카드에서 글자를 줄이므로 숫자는 따로 그린다. */}
         <div
           className={cn(
             "font-heading text-2xl leading-tight font-semibold tabular-nums sm:text-3xl",
-            // 칸 높이는 한 줄 기준으로 고정하고, 글자는 카드 폭에 맞춰 줄인다.
-            fit && "flex h-[1.875rem] items-center overflow-hidden whitespace-nowrap text-[clamp(0.8rem,7.5cqi,1.5rem)] sm:h-[2.34375rem] sm:text-[clamp(0.8rem,7.5cqi,1.875rem)]",
+            // 칸 높이는 한 줄 기준으로 고정하고, 글자 크기는 아래 style 이 정한다.
+            fit && "flex h-[1.875rem] items-center overflow-hidden whitespace-nowrap sm:h-[2.34375rem]",
             zero && "text-muted-foreground",
             danger && "text-destructive",
             action && "text-action"
           )}
+          style={글자크기 ? { fontSize: 글자크기 } : undefined}
         >
-          {typeof value === "number" ? won(value) : value}
+          {글}
           {unit && <span className="ml-0.5 text-sm font-medium">{unit}</span>}
         </div>
       </CardHeader>
-      {hint && <CardContent className="truncate text-xs text-muted-foreground">{hint}</CardContent>}
+
     </Card>
   )
 }

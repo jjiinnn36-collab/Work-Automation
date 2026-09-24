@@ -29,10 +29,7 @@ export function YearPage() {
   const y = data.year
   const remaining = sortRemaining(data.remaining.filter((o) => matchYearFilter(o, filter, data.today)))
   const finished = data.finished.filter((o) => matchYearFilter(o, filter, data.today))
-  const all = [...data.remaining, ...data.finished]
-  const unknown = all.filter((o) => o.amount === null && o.paid && !o.beforeStart)
-  const inProg = data.remaining.filter((o) => yearStatus(o, data.today) === "progress")
-  const upcoming = sortRemaining(data.remaining.filter((o) => yearStatus(o, data.today) === "upcoming"))
+
   const setF = (patch: Partial<YearFilter>) => setFilter((f) => ({ ...f, ...patch }))
   const filtered = filter.month || filter.org || filter.status || filter.q
 
@@ -69,11 +66,11 @@ export function YearPage() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <StatCard label="지난 건" value={data.past} hint={`완료 ${data.pastDone} · 지남 ${data.past - data.pastDone}`} />
-        <StatCard label="진행중" value={data.inProgress} hint={inProg.map((o) => o.name).join(" · ") || "없음"} />
-        <StatCard label="진행예정" value={data.upcoming} hint={upcoming[0] ? `가장 이른 건 ${upcoming[0].due.slice(5)}` : "없음"} />
-        <StatCard label="기한 지남" value={data.overdue} tone="danger" hint={data.overdue > 0 ? "남은 건 맨 위에 고정" : "없음"} />
-        <StatCard label="금액 미확인" value={data.amountUnknown} tone="action" hint={unknown.slice(0, 3).map((o) => o.name).join(" · ") || "없음"} />
+        <StatCard label="지난 건" value={data.past} />
+        <StatCard label="진행중" value={data.inProgress} />
+        <StatCard label="진행예정" value={data.upcoming} />
+        <StatCard label="기한 지남" value={data.overdue} tone="danger" />
+        <StatCard label="금액 미확인" value={data.amountUnknown} tone="action" />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

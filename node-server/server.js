@@ -111,11 +111,14 @@ function get(reqPath, q, port) {
   const env = Env.open(dataDir, 오늘());
   try {
     switch (reqPath) {
+      // 바뀐 것이 있는지만 묻는 가장 가벼운 요청. 화면은 이 숫자가 달라졌을 때만 전체를 다시 읽는다.
+      case "/api/seq": return { seq: env.Db.변경번호() };
       case "/api/alerts": return Api.alerts(env);
       case "/api/month": return Api.month(env, q.ym);
       case "/api/year": return Api.year(env, q.y);
       case "/api/items": return Api.items(env);
       case "/api/loans": return Api.loans(env);
+      case "/api/loan/summary": return Api.loanSummary(env, String(q.group || "").trim());
       case "/api/history": return Api.history(env, q.from, q.to);
       case "/api/events": return Api.events(env, q);
       case "/api/group": return Api.group(env, Api.연도(q.y), q.group);
@@ -152,6 +155,7 @@ async function post(reqPath, f) {
       case "/api/amount/delete": return W.deleteAmount(env, f);
       case "/api/item": return W.saveItem(env, f);
       case "/api/item/delete": return W.deleteItem(env, f);
+      case "/api/loan/delete": return W.deleteLoan(env, dataDir, baseDir, f);
       case "/api/item/move": return W.moveItem(env, f);
       case "/api/group/amounts": return W.saveGroupAmounts(env, f);
       case "/api/settings/start-date": return W.setStartDate(env, f);
@@ -256,7 +260,7 @@ function 시작(시작포트) {
             if (reqPath === "/api/attach")
               return 보내기(res, 200, AT.attach(env, dataDir, q, req.headers["x-file-name"], buf));
             const LI = require("./lib/loan-import");
-            return 보내기(res, 200, LI.importLoans(env, u.searchParams, req.headers["x-file-name"], buf));
+            return 보내기(res, 200, LI.importLoans(env, u.searchParams, req.headers["x-file-name"], buf, dataDir));
           } finally {
             env.close();
           }

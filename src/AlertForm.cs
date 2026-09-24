@@ -87,6 +87,19 @@ namespace PaymentAlert
         /// </summary>
         public Func<AlertRow, string, StatusRecord> 단계변경;
 
+        /// <summary>
+        /// 웹 화면에서 바꾼 것을 팝업에도 반영하는 통로. 둘 다 Program 이 연결한다.
+        /// 변경번호읽기 는 자료가 바뀔 때마다 오르는 번호, 상태다시읽기 는 지금 카드들의 상태를 DB 에서 다시 읽는 일.
+        /// 비어 있으면 자동 반영을 하지 않는다 (화면 시험용).
+        /// </summary>
+        public Func<long> 변경번호읽기;
+        public Action 상태다시읽기;
+
+        // 2초마다 번호만 견주고, 달라졌을 때만 다시 읽는다. 전체를 계속 읽지 않는다.
+        const int 동기ms = 2000;
+        Timer 동기타이머;
+        long 마지막번호 = -1;
+
         /// <summary>작업 영역(작업 표시줄을 뺀 화면)에서 팝업이 놓일 자리. 아래는 틈 없이, 오른쪽은 12px 띄운다.</summary>
         public static Rectangle 자리(Rectangle 작업영역)
         {
@@ -329,6 +342,13 @@ namespace PaymentAlert
                 넘김타이머.Stop();
                 넘김실행();
             };
+
+            // 웹 화면에서 바꾼 것을 따라잡는다. 번호만 견주므로 값싸다.
+            동기타이머 = new Timer();
+            동기타이머.Interval = 동기ms;
+            동기타이머.Tick += delegate { 바뀐것따라잡기(); };
+            동기타이머.Start();
+            FormClosed += delegate { 동기타이머.Stop(); };
 
             // 첫 장은 아직 안 고른 건 중 기한이 가장 이른 건. rows 는 이미 기한 순이다.
             int first = 다음남은건(-1);
@@ -851,6 +871,29 @@ namespace PaymentAlert
         }
 
         /// <summary>동작을 적용한다. 다른 창이 먼저 바꿨으면 알리고 최신 단계로 맞춘 뒤 false.</summary>
+        /// <summary>
+        /// 웹 화면 등 다른 창에서 바뀐 것을 따라잡는다. 번호가 그대로면 아무 일도 하지 않는다.
+        /// 막 누른 직후나 카드가 넘어가는 중에는 건너뛴다 — 그 사이 화면이 바뀌면 잘못 눌린다 (ADR-0022).
+        /// </summary>
+        void 바뀐것따라잡기()
+        {
+            if (변경번호읽기 == null || 상태다시읽기 == null) return;
+            if (행동막힘) return;
+            if (넘김타이머 != null && 넘김타이머.Enabled) return;
+
+            long n;
+            try { n = 변경번호읽기(); }
+            catch { return; }               // DB 가 잠깐 잠겼을 수 있다. 다음 차례에 다시 본다.
+
+            if (마지막번호 < 0) { 마지막번호 = n; return; }
+            if (n == 마지막번호) return;
+            마지막번호 = n;
+
+            try { 상태다시읽기(); }
+            catch { return; }
+            RefreshState();
+        }
+
         bool 적용(AlertRow row, string 동작)
         {
             if (단계변경 == null)

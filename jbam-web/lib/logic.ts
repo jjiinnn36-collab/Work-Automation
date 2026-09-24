@@ -153,11 +153,46 @@ export function groupSum(rows: { id: string; amount: number | null }[], typed: R
 }
 
 /** 브라우저 보기창에서 바로 보이는 형식인가 (AC-W105, W106) */
-export function previewKind(fileName: string): "pdf" | "image" | "none" {
+export function previewKind(fileName: string): "pdf" | "image" | "csv" | "none" {
   const ext = fileName.toLowerCase().split(".").pop() ?? ""
   if (ext === "pdf") return "pdf"
   if (["png", "jpg", "jpeg", "gif"].includes(ext)) return "image"
+  if (ext === "csv") return "csv"
   return "none"
+}
+
+/**
+ * 보관해 둔 원본 스케줄 CSV 를 표로 보여 주려고 읽는다.
+ * BOM 을 떼고, 감싼 따옴표를 풀고, 수식 막기로 붙인 앞따옴표도 되돌린다.
+ */
+export function parseCsv(text: string): string[][] {
+  const s = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ""
+  let quoted = false
+  const 넣기 = () => {
+    // 쓸 때 붙인 수식 막기 따옴표를 떼어 원래 값으로 보여 준다.
+    row.push(/^'[=+\-@]/.test(cell) ? cell.slice(1) : cell)
+    cell = ""
+  }
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (quoted) {
+      if (c !== '"') { cell += c; continue }
+      if (s[i + 1] === '"') { cell += '"'; i++ } else quoted = false
+      continue
+    }
+    if (c === '"') { quoted = true; continue }
+    if (c === ",") { 넣기(); continue }
+    if (c === "\r") continue
+    if (c === "\n") { 넣기(); rows.push(row); row = []; continue }
+    cell += c
+  }
+  if (cell.length > 0 || row.length > 0) { 넣기(); rows.push(row) }
+  // 끝에 생긴 빈 줄은 버린다.
+  while (rows.length > 0 && rows[rows.length - 1].every((v) => v === "")) rows.pop()
+  return rows
 }
 
 /** 엑셀이 수식으로 읽지 않게 막고, 쉼표·따옴표·줄바꿈을 감싼다. */
@@ -351,15 +386,20 @@ export function loanKey(file: string, sheet: string): string {
 type LoanLike = { sheet: string; ok: boolean; newCount?: number }
 
 /** 처음 고를 차입건: 읽혔고 새로 넣을 회차가 있는 시트. */
+/**
+ * 처음에 골라 둘 시트: 읽을 수 있는 시트 전부.
+ * 새 회차가 없는(이미 다 등록된) 시트도 고른다 — 올린 원본 스케줄을 증빙으로 보관해야 하기 때문이다
+ * (같은 파일을 다시 올려 원본만 채우는 경우, 사용자 요청 2026-09-23).
+ */
 export function loanDefaultKeys(files: { file: string; loans: LoanLike[] }[]): string[] {
   const keys: string[] = []
-  for (const f of files) for (const l of f.loans) if (l.ok && (l.newCount ?? 0) > 0) keys.push(loanKey(f.file, l.sheet))
+  for (const f of files) for (const l of f.loans) if (l.ok) keys.push(loanKey(f.file, l.sheet))
   return keys
 }
 
-/** 한 파일에서 저장할 시트: 고른 것 중 새 회차가 있는 것. 비면 그 파일은 보내지 않는다. */
+/** 한 파일에서 저장할 시트: 고른 것 전부. 비면 그 파일은 보내지 않는다. */
 export function loanSaveSheets(file: string, loans: LoanLike[], selected: string[]): string[] {
-  return loans.filter((l) => l.ok && (l.newCount ?? 0) > 0 && selected.includes(loanKey(file, l.sheet))).map((l) => l.sheet)
+  return loans.filter((l) => l.ok && selected.includes(loanKey(file, l.sheet))).map((l) => l.sheet)
 }
 
 /**

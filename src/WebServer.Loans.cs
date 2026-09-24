@@ -133,6 +133,15 @@ namespace PaymentAlert
                 // 차입명이 비면 시트명을 차입명으로 쓴다 (사용자 요청 2026-09-22).
                 if (job.Plan.차입명 == null || job.Plan.차입명.Trim().Length == 0) job.Plan.차입명 = (job.Sheet.이름 ?? "").Trim();
                 job.묶음 = env.Db.차입묶음(job.Plan.거래처, job.Plan.차입일, job.Plan.차입명);
+                // 이름을 안 보냈으면 시트로도 되찾는다 — 이름을 바꿔 둔 차입건에 같은 파일을 다시 올렸을 때
+                // 새 차입건이 하나 더 생기면 안 된다. 되찾았으면 그 차입건의 이름을 그대로 잇는다.
+                if (job.묶음 == null && nm == null)
+                {
+                    job.묶음 = env.Db.차입묶음시트(job.Plan.거래처, job.Plan.차입일, job.Sheet.이름);
+                    if (job.묶음 != null)
+                        foreach (Store.차입건 있던 in env.Db.차입목록())
+                            if (있던.묶음 == job.묶음) { job.Plan.차입명 = 있던.차입명; job.Plan.약칭 = 있던.약칭; }
+                }
             }
 
             foreach (차입할일 job in 할일)
@@ -166,7 +175,9 @@ namespace PaymentAlert
                     foreach (PaymentItem it in items) if (added.Contains(it.Id)) created.Add(it);
                     새회차 += added.Count;
                     있던회차 += items.Count - added.Count;
-                    dto = 차입Dto(env, plan, 묶음, 앞회차).Set("group", 묶음).Set("added", added.Count);
+                    // 이 사업건 시트만 떼어 원본 스케줄로 보관한다 — 차입건에 한 부, 직전과 같은 내용이면 새로 만들지 않는다.
+                    string 보관 = LoanDoc.원본보관(env.Db, dataDir, 묶음, sheet, plan, DateTime.Now);
+                    dto = 차입Dto(env, plan, 묶음, 앞회차).Set("group", 묶음).Set("added", added.Count).Set("doc", 보관);
                 }
                 if (checks != null) dto.Set("checks", checks);
                 loans.Add(dto.Set("selected", 선택됨));
@@ -200,6 +211,83 @@ namespace PaymentAlert
                     .Set("file", x.파일));
             }
             return Head(env).Set("loans", list);
+        }
+
+        /// <summary>이 차입건의 회차 id 들.</summary>
+        static List<string> 회차아이디들(Env env, string 묶음)
+        {
+            var ids = new List<string>();
+            foreach (PaymentItem it in env.Master) if (it.묶음 == 묶음) ids.Add(it.Id);
+            return ids;
+        }
+
+        static Store.차입건 차입찾기(Env env, string group)
+        {
+            foreach (Store.차입건 x in env.Db.차입목록()) if (x.묶음 == group) return x;
+            throw new HttpError(404, "그런 차입건이 없습니다: " + group);
+        }
+
+        /// <summary>GET /api/loan/summary — 차입건을 지우기 전에 무엇이 함께 지워지는지 센다 (확인 창에 그대로 보인다).</summary>
+        JObj 차입요약(Env env, string group)
+        {
+            Store.차입건 대상 = 차입찾기(env, group);
+            List<string> ids = 회차아이디들(env, group);
+            int 금액 = 0, 진행 = 0, 변경 = 0, 회차증빙 = 0;
+            foreach (string id in ids)
+            {
+                금액 += env.Db.행수("amounts", id);
+                진행 += env.Db.행수("status", id);
+                변경 += env.Db.행수("events", id);
+                회차증빙 += env.Db.증빙수(id);
+            }
+            return new JObj()
+                .Set("group", group).Set("org", 대상.거래처)
+                .Set("name", 대상.차입명.Length > 0 ? 대상.차입명 : group).Set("short", 대상.약칭)
+                .Set("start", 대상.차입일.ToString("yyyy-MM-dd", Inv))
+                .Set("items", ids.Count).Set("amounts", 금액).Set("status", 진행).Set("events", 변경)
+                .Set("docs", env.Db.차입원본목록(group).Count).Set("otherDocs", 회차증빙);
+        }
+
+        /// <summary>
+        /// POST /api/loan/delete — 차입건을 통째로 지운다 (사용자 결정 2026-09-23, ㄷ안).
+        /// purge=1 이면 금액·진행·변경기록까지 지운다. 기본은 남긴다.
+        /// 원본 스케줄 파일은 늘 함께 지운다 — DB 가 먼저 정리된 뒤에만 손댄다.
+        /// </summary>
+        JObj 차입삭제(Env env, NameValueCollection f)
+        {
+            string group = (f["group"] ?? "").Trim();
+            if (group.Length == 0) throw new HttpError(400, "차입건을 고르지 않았습니다.");
+            Store.차입건 대상 = 차입찾기(env, group);
+            bool 기록까지 = f["purge"] == "1" || f["purge"] == "true";
+
+            List<string> ids = 회차아이디들(env, group);
+            // 지울 파일 경로를 먼저 읽어 둔다 — 행을 지우고 나면 어디 있었는지 알 수 없다.
+            List<string> 파일들 = LoanDoc.원본경로들(env.Db, dataDir, group);
+
+            // 되돌릴 수단을 먼저 만든다. 실패해도 삭제는 진행한다 (사용자가 이미 확인했다).
+            string 백업 = null;
+            try { 백업 = System.IO.Path.GetFileName(Backups.지금백업(env.Db, 백업폴더(), DateTime.Now)); }
+            catch { }
+
+            string 내용 = (대상.차입명.Length > 0 ? 대상.차입명 : group) + " · 회차 " +
+                ids.Count.ToString(Inv) + "건" + (기록까지 ? " · 기록까지" : "");
+            int[] 지움 = env.Db.차입삭제(group, ids, 기록까지, 대상.차입일.Year, 내용);
+
+            // DB 가 먼저 정리된 뒤에만 파일을 지운다. 반대로 하면 되돌려졌을 때 파일만 사라진다.
+            int 지운파일 = 0;
+            foreach (string p in 파일들)
+            {
+                try { if (System.IO.File.Exists(p)) { System.IO.File.Delete(p); 지운파일++; } }
+                catch { }
+            }
+            try { System.IO.Directory.Delete(LoanDoc.차입폴더(dataDir, group)); }
+            catch { }
+
+            return new JObj().Set("ok", true).Set("group", group)
+                .Set("name", 대상.차입명.Length > 0 ? 대상.차입명 : group)
+                .Set("items", ids.Count).Set("docs", 지운파일)
+                .Set("amounts", 지움[0]).Set("status", 지움[1]).Set("events", 지움[2])
+                .Set("purged", 기록까지).Set("backup", 백업);
         }
 
         /// <summary>묶음의 회차 중 지급일이 기준일보다 앞선 것의 수.</summary>

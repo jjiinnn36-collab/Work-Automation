@@ -145,6 +145,29 @@ export interface AttachmentFile {
   at: string
 }
 
+/** 차입건(묶음)에 한 부씩 붙는 원본 스케줄 CSV. 그 차입의 어느 회차에서 열어도 같은 목록이 보인다. */
+export interface LoanDocFile {
+  file: string
+  name: string
+  year: number
+  at: string
+}
+
+/** 차입건을 지우기 전에 무엇이 함께 지워지는지. */
+export interface LoanSummary {
+  group: string
+  org: string
+  name: string
+  short: string
+  start: string
+  items: number
+  amounts: number
+  status: number
+  events: number
+  docs: number
+  otherDocs: number
+}
+
 // ── 차입 스케줄 가져오기 (ADR-0023) ──
 
 export interface LoanRowPart {
@@ -194,6 +217,8 @@ export interface LoanPreview {
   diffCount?: number
   warnings?: string[]
   selected?: boolean
+  /** 저장할 때 원본 스케줄을 보관한 결과: "새로" · "같음" · "실패" */
+  doc?: string
   group?: string
   added?: number
   /** 연장스케줄 업로드일 때 연장이 맞는지 본 항목 */

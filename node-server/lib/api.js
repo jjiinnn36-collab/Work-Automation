@@ -309,15 +309,43 @@ function loans(env) {
   return Object.assign(head(env), { loans: list });
 }
 
+/** 차입건 하나를 지우기 전에 무엇이 함께 지워지는지 세어 둔다 (확인 창에 그대로 보여 준다). */
+function loanSummary(env, group) {
+  const LD = require("./loan-doc");
+  const 차입 = env.Db.차입목록().find((x) => x.묶음 === group);
+  if (!차입) throw new HttpError(404, "그런 차입건이 없습니다: " + group);
+  const ids = env.Db.all("SELECT id FROM items WHERE 묶음=?", group).map((r) => r.id);
+  const q = ids.map(() => "?").join(",");
+  const 세기 = (표) => (ids.length ? Number(env.Db.all(`SELECT COUNT(*) n FROM ${표} WHERE id IN (${q})`, ...ids)[0].n) : 0);
+  const 회차증빙 = ids.length
+    ? Number(env.Db.all(`SELECT COUNT(*) n FROM attachments WHERE id IN (${q}) AND 종류<>?`, ...ids, LD.종류)[0].n)
+    : 0;
+  return {
+    group, org: 차입.거래처, name: 차입.차입명 || group, short: 차입.약칭,
+    start: D.ymd(차입.차입일),
+    items: ids.length,
+    amounts: 세기("amounts"), status: 세기("status"), events: 세기("events"),
+    docs: LD.원본목록(env.Db, group).length,
+    otherDocs: 회차증빙,
+  };
+}
+
 function attachments(env, y, id) {
+  const LD = require("./loan-doc");
   const rows = env.Db.all(
-    "SELECT 저장파일,원본파일명,단계,종류,첨부일시 FROM attachments WHERE 연도=? AND id=? ORDER BY rid", y, id);
+    "SELECT 저장파일,원본파일명,단계,종류,첨부일시 FROM attachments WHERE 연도=? AND id=? AND 종류<>? ORDER BY rid",
+    y, id, LD.종류);
+  // 차입 회차면 그 차입건의 원본 스케줄도 함께 내준다 — 회차 어느 곳에서 열어도 같은 목록이 보인다.
+  const it = env.Item(id);
+  const 묶음 = it && it.차입 && it.묶음 ? it.묶음 : null;
   return {
     year: y, id,
     files: rows.map((a) => ({
       file: a.저장파일, name: a.원본파일명, stage: a.단계, kind: a.종류,
       at: a.첨부일시 ? String(a.첨부일시).replace("T", " ").slice(0, 16) : "",
     })),
+    loanGroup: 묶음,
+    loanDocs: LD.원본목록(env.Db, 묶음),
   };
 }
 
@@ -364,5 +392,5 @@ function 일시(d) {
 
 module.exports = {
   HttpError, 연도, 아이디, 날짜, warnings, occurrenceOf,
-  alerts, month, year, items, history, group, events, loans, attachments, settings,
+  alerts, month, year, items, history, group, events, loans, loanSummary, attachments, settings,
 };

@@ -127,9 +127,11 @@ function AlertCard({ o }: { o: Occurrence }) {
   const overdue = o.severity === "overdue"
   return (
     <Card className={cn(overdue && "ring-destructive/40", o.confirmedToday && "opacity-70")}>
+      {/* 구분(차입금 이자·부가세 …)을 위에, 상세(사업건·기관)를 아래에 (사용자 요청 2026-09-23).
+          다른 목록(이번 달·연간)과 읽는 순서를 맞춘다. */}
       <CardHeader>
-        <CardDescription><OrgName o={o} /></CardDescription>
         <CardTitle className="text-lg">{o.name}</CardTitle>
+        <CardDescription><OrgName o={o} /></CardDescription>
         <CardAction><StatusBadge o={o} /></CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">

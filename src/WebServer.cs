@@ -274,6 +274,7 @@ namespace PaymentAlert
                     case "/api/year": Send(ctx.Response, 200, Year(env, q["y"])); return;
                     case "/api/items": Send(ctx.Response, 200, Items(env)); return;
                     case "/api/loans": Send(ctx.Response, 200, 차입목록(env)); return;
+                    case "/api/loan/summary": Send(ctx.Response, 200, 차입요약(env, (q["group"] ?? "").Trim())); return;
                     case "/api/history": Send(ctx.Response, 200, History(env, q["from"], q["to"])); return;
                     case "/api/attachments":
                         Send(ctx.Response, 200, AttachmentList(env, 연도(q["y"]), 아이디(q["id"])));
@@ -281,6 +282,10 @@ namespace PaymentAlert
                     case "/api/settings": Send(ctx.Response, 200, Settings(env)); return;
                     case "/api/group": Send(ctx.Response, 200, Group(env, 연도(q["y"]), q["group"])); return;
                     case "/api/events": Send(ctx.Response, 200, Events(env, q)); return;
+                    // 바뀐 것이 있는지만 묻는 가장 가벼운 요청. 화면은 이 숫자가 달라졌을 때만 전체를 다시 읽는다.
+                    case "/api/seq":
+                        Send(ctx.Response, 200, new JObj().Set("seq", env.Db.변경번호()));
+                        return;
                     case "/api/health":
                         Send(ctx.Response, 200, new JObj().Set("ok", true).Set("version", AppInfo.버전)
                             .Set("schema", env.Db.버전).Set("today", env.Today.ToString("yyyy-MM-dd", Inv)));
@@ -325,6 +330,7 @@ namespace PaymentAlert
                         return;
                     case "/api/item": Send(ctx.Response, 200, SaveItem(env, f)); return;
                     case "/api/item/delete": Send(ctx.Response, 200, DeleteItem(env, f)); return;
+                    case "/api/loan/delete": Send(ctx.Response, 200, 차입삭제(env, f)); return;
                     case "/api/settings/start-date": Send(ctx.Response, 200, SetStartDate(env, f)); return;
                     case "/api/group/amounts": Send(ctx.Response, 200, SaveGroupAmounts(env, f)); return;
                     case "/api/open": Send(ctx.Response, 200, OpenFile(env, f)); return;
@@ -673,6 +679,7 @@ namespace PaymentAlert
             var list = new List<object>();
             foreach (Attachment a in env.Files.For(y, id))
             {
+                if (a.종류 == LoanDoc.종류) continue;   // 차입 원본은 아래 loanDocs 로 따로 내준다
                 list.Add(new JObj()
                     .Set("file", a.저장파일)
                     .Set("name", a.원본파일명)
@@ -680,7 +687,23 @@ namespace PaymentAlert
                     .Set("kind", a.종류)
                     .Set("at", a.첨부일시 == DateTime.MinValue ? "" : a.첨부일시.ToString("yyyy-MM-dd HH:mm", Inv)));
             }
-            return new JObj().Set("year", y).Set("id", id).Set("files", list);
+
+            // 차입 회차면 그 차입건의 원본 스케줄도 함께 — 회차 어느 곳에서 열어도 같은 목록이 보인다.
+            string 묶음 = null;
+            foreach (PaymentItem it in env.Master)
+                if (it.Id == id) { 묶음 = it.차입 && it.묶음.Length > 0 ? it.묶음 : null; break; }
+
+            var docs = new List<object>();
+            if (묶음 != null)
+                foreach (Attachment a in env.Db.차입원본목록(묶음))
+                    docs.Add(new JObj()
+                        .Set("file", a.저장파일)
+                        .Set("name", a.원본파일명)
+                        .Set("year", a.연도)
+                        .Set("at", a.첨부일시 == DateTime.MinValue ? "" : a.첨부일시.ToString("yyyy-MM-dd HH:mm", Inv)));
+
+            return new JObj().Set("year", y).Set("id", id).Set("files", list)
+                .Set("loanGroup", 묶음).Set("loanDocs", docs);
         }
 
         void SendFile(HttpListenerResponse res, Env env, int y, string id, string f)

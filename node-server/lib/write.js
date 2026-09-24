@@ -6,6 +6,8 @@ const { Stages, AmountRules, 납부있음, 해당연도 } = require("./model");
 const { StageConflictError } = require("./store");
 const { HttpError, 연도, 아이디, occurrenceOf } = require("./api");
 const { dto, itemDto } = require("./dto");
+const fs = require("node:fs");
+const SW = require("./settings-write");
 
 const 출처 = "웹";
 const 아이디형식 = /^[A-Za-z0-9_-]{1,40}$/;
@@ -328,4 +330,70 @@ function setStartDate(env, f) {
   return { ok: true, startDate: d ? s : null };
 }
 
-module.exports = { changeStage, saveAmount, deleteAmount, saveItem, deleteItem, moveItem, saveGroupAmounts, setStartDate };
+/** "2026-09-23 17:40:12" 꼴의 지금 시각. */
+function 지금글() {
+  const n = new Date(); const p = (x) => String(x).padStart(2, "0");
+  return n.getFullYear() + "-" + p(n.getMonth() + 1) + "-" + p(n.getDate()) + " " +
+    p(n.getHours()) + ":" + p(n.getMinutes()) + ":" + p(n.getSeconds());
+}
+
+/** 지울 차입건의 회차 id 들. */
+function 회차ids(env, 묶음) {
+  return env.Db.all("SELECT id FROM items WHERE 묶음=?", 묶음).map((r) => r.id);
+}
+
+/**
+ * 차입건 하나를 통째로 지운다 (사용자 결정 2026-09-23, ㄷ안).
+ * 기본은 다른 항목 삭제와 같게 금액·진행·변경기록을 남긴다 — 실수로 지웠다가 다시 가져오면 이어지도록.
+ * purge 가 켜져 있을 때만 그것까지 지운다. 회차에 직접 붙인 증빙은 어느 쪽이든 남긴다.
+ * 차입 원본 스케줄 파일은 늘 함께 지운다 (차입건이 없어지면 쓸 곳이 없다).
+ */
+function deleteLoan(env, dataDir, baseDir, f) {
+  const LD = require("./loan-doc");
+  const 묶음 = String(f.group || "").trim();
+  if (!묶음) throw new HttpError(400, "차입건을 고르지 않았습니다.");
+  const 차입 = env.Db.차입목록().find((x) => x.묶음 === 묶음);
+  if (!차입) throw new HttpError(404, "그런 차입건이 없습니다: " + 묶음);
+  const 기록까지 = f.purge === "1" || f.purge === "true";
+
+  const ids = 회차ids(env, 묶음);
+  // 지울 파일 경로를 트랜잭션 전에 읽어 둔다 — 행을 지우고 나면 어디 있었는지 알 수 없다.
+  const 파일들 = LD.원본경로들(env.Db, dataDir, 묶음);
+
+  // 되돌릴 수단을 먼저 만든다. 실패해도 삭제는 진행한다 (사용자가 이미 확인했다).
+  let 백업 = null;
+  try { 백업 = SW.backupNow(env.Db, baseDir, dataDir).name; } catch { }
+
+  let 지운금액 = 0, 지운진행 = 0, 지운기록 = 0;
+  env.Db.tx(() => {
+    env.Db.run("DELETE FROM attachments WHERE id=? AND 종류=?", 묶음, LD.종류);
+    env.Db.run("DELETE FROM items WHERE 묶음=?", 묶음);
+    if (기록까지 && ids.length) {
+      const q = ids.map(() => "?").join(",");
+      지운금액 = Number(env.Db.run(`DELETE FROM amounts WHERE id IN (${q})`, ...ids).changes || 0);
+      지운진행 = Number(env.Db.run(`DELETE FROM status WHERE id IN (${q})`, ...ids).changes || 0);
+      지운기록 = Number(env.Db.run(`DELETE FROM events WHERE id IN (${q})`, ...ids).changes || 0);
+    }
+    env.Db.run("DELETE FROM loans WHERE 묶음=?", 묶음);
+    // 무엇을 지웠는지는 남긴다 — 차입건 자체가 사라져도 흔적은 있어야 한다.
+    env.Db.기록(D.year(차입.차입일), 묶음, "차입삭제", null, null, "웹",
+      (차입.차입명 || 묶음) + " · 회차 " + ids.length + "건" + (기록까지 ? " · 기록까지" : ""));
+    env.Db.setMeta("master_updated_at", 지금글());
+  });
+
+  // DB 가 먼저 정리된 뒤에만 파일을 지운다. 반대로 하면 되돌려졌을 때 파일만 사라진다.
+  let 지운파일 = 0;
+  for (const p of 파일들) {
+    try { if (fs.existsSync(p)) { fs.unlinkSync(p); 지운파일++; } } catch { }
+  }
+  try { fs.rmdirSync(LD.차입폴더(dataDir, 묶음)); } catch { }
+
+  return {
+    ok: true, group: 묶음, name: 차입.차입명 || 묶음,
+    items: ids.length, docs: 지운파일,
+    amounts: 지운금액, status: 지운진행, events: 지운기록,
+    purged: 기록까지, backup: 백업,
+  };
+}
+
+module.exports = { changeStage, saveAmount, deleteAmount, saveItem, deleteItem, moveItem, saveGroupAmounts, setStartDate, deleteLoan };

@@ -72,6 +72,11 @@ function num(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** 자료를 바꾸는 문장인지 (첫 낱말만 본다). BEGIN·COMMIT·PRAGMA 는 아니다. */
+function 바꾸는문장(sql) {
+  return typeof sql === "string" && /^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql);
+}
+
 class Store {
   constructor(path) {
     this.path = path;
@@ -118,19 +123,49 @@ class Store {
 
   all(sql, ...args) { return this.db.prepare(sql).all(...args); }
 
-  run(sql, ...args) { return this.db.prepare(sql).run(...args); }
+  run(sql, ...args) {
+    const r = this.db.prepare(sql).run(...args);
+    // 트랜잭션 밖에서 혼자 쓰는 문장도 번호를 올려야 다른 창이 알아챈다.
+    // 트랜잭션 안이면 끝에서 한 번만 올린다 (한 번의 변경 = 한 번의 증가).
+    if (!this._트랜잭션중 && !this._번호올리는중 && 바꾸는문장(sql)) this.변경번호올리기();
+    return r;
+  }
 
   /** 한 쓰기 트랜잭션. 안에서 던지면 되돌린다. */
   tx(fn) {
     this.db.exec("BEGIN IMMEDIATE");
+    this._트랜잭션중 = true;
     try {
       const r = fn();
+      this.변경번호올리기();
+      this._트랜잭션중 = false;
       this.db.exec("COMMIT");
       return r;
     } catch (e) {
+      this._트랜잭션중 = false;
       try { this.db.exec("ROLLBACK"); } catch { }
       throw e;
     }
+  }
+
+  /**
+   * 자료가 바뀔 때마다 1 씩 오르는 번호. 팝업과 웹 화면이 서로의 변경을 알아채는 데 쓴다.
+   * 스키마를 처음 만드는 중이라 meta 가 아직 없으면 조용히 건너뛴다.
+   */
+  변경번호올리기() {
+    if (this._번호올리는중) return;
+    this._번호올리는중 = true;
+    try {
+      this.db.exec("INSERT INTO meta(key,value) VALUES('change_seq','1') " +
+        "ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1");
+    } catch { } finally { this._번호올리는중 = false; }
+  }
+
+  /** 바뀔 때마다 오르는 번호. 이 숫자가 달라졌을 때만 전체를 다시 읽는다 (없으면 0). */
+  변경번호() {
+    const v = this.getMeta("change_seq");
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
   }
 
   getMeta(key) {
@@ -499,6 +534,16 @@ class Store {
   차입묶음이름(거래처, 차입일, 차입명) {
     const r = this.all("SELECT 묶음 FROM loans WHERE 거래처=? AND 차입일=? AND 차입명=?",
       거래처, Ddate(차입일), (차입명 || "").trim());
+    return r.length ? r[0].묶음 : null;
+  }
+
+  /**
+   * 같은 거래처·차입일에 이 시트에서 가져온 차입건의 묶음. 없으면 null.
+   * 이름을 따로 안 보내고 같은 파일을 다시 올렸을 때, 그 사이 이름을 바꿔 둔 차입건을 되찾는 데 쓴다.
+   */
+  차입묶음시트(거래처, 차입일, 시트) {
+    const r = this.all("SELECT 묶음 FROM loans WHERE 거래처=? AND 차입일=? AND 시트=?",
+      거래처, Ddate(차입일), (시트 || "").trim());
     return r.length ? r[0].묶음 : null;
   }
 

@@ -61,7 +61,7 @@ export function HistoryPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard label="조회 기간" value={period} unit="" fit={!whole} />
         <StatCard label="처리 완료" value={data.rows.length} />
-        <StatCard label="기간 합계" value={won(data.total)} unit="원" />
+        <StatCard label="기간 합계" value={won(data.total)} unit="원" fit />
       </div>
 
       <form
